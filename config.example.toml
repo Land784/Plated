@@ -1,0 +1,33 @@
+# Copy this file to config.toml and fill in your own values.
+# config.toml is gitignored -- never commit real secrets here.
+
+[[dining_halls]]
+slug = "north-dining-hall"  # TODO: verify in DevTools Network tab
+name = "North Dining Hall"
+
+[[dining_halls]]
+slug = "south-dining-hall"  # TODO: verify in DevTools Network tab
+name = "South Dining Hall"
+
+# Maps a friendly meal period name to Nutrislice's menu_type slug.
+# TODO: confirm these values in DevTools before relying on them.
+[meal_types]
+breakfast = "breakfast"
+lunch = "lunch"
+dinner = "dinner"
+
+[allergens]
+# Allergen names to exclude, matched case-insensitively against
+# whatever tag names Nutrislice reports (e.g. "Milk", "Tree Nuts").
+exclude = []
+# "flag" (default) shows items with no allergen data, clearly marked.
+# "exclude" drops them instead. Missing data is NEVER treated as safe.
+unknown_policy = "flag"
+
+[planner]
+protein_target_g = 40
+# calorie_cap = 1200  # optional
+
+[notify]
+# Prefer the NTFY_TOPIC environment variable / GitHub Actions secret.
+# ntfy_topic = "your-private-topic-name"

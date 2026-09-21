@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+.cache/
+config.toml
+menu_history.sqlite3
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+.idea/
+CLAUDE.md

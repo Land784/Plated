@@ -1,0 +1,47 @@
+{
+  "days": [
+    {
+      "date": "2024-01-08",
+      "menu_items": [
+        {
+          "is_station_header": true,
+          "station": "Grill"
+        },
+        {
+          "station": "Grill",
+          "food": {
+            "name": "Grilled Chicken Breast",
+            "description": "Seasoned grilled chicken breast",
+            "rounded_nutrition_info": {
+              "calories": 180,
+              "g_protein": 35,
+              "g_fat": 4,
+              "g_carbs": 0
+            },
+            "serving_size_amount": 4,
+            "serving_size_unit": "oz",
+            "allergens": []
+          }
+        },
+        {
+          "station": "Deli",
+          "food": {
+            "name": "Turkey Sandwich",
+            "rounded_nutrition_info": {
+              "calories": 450,
+              "g_protein": 28
+            },
+            "allergens": [
+              {"name": "Wheat"},
+              {"name": "Milk"}
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "date": "2024-01-09",
+      "menu_items": []
+    }
+  ]
+}
