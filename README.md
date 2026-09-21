@@ -60,9 +60,20 @@ waiting for the clock.
 
 ## Subscribers
 
-One TOML file per person. See [`users/example.toml`](./users/example.toml)
-for the fully commented format: ntfy topic, timezone, halls, station
+One TOML file per person, loaded from a `users/` directory. Copy the
+commented template to get started:
+
+```bash
+cp users.example.toml users/wes.toml
+```
+
+It documents the full format: ntfy topic, timezone, halls, station
 allowlist, per-station cap, and per-weekday send times.
+
+The template lives *outside* `users/` on purpose. `dispatch` notifies
+every file in that directory, so a placeholder left sitting there would
+push real notifications to a guessable public topic. `users/` itself is
+gitignored in this repo.
 
 Station matching ignores case and a leading "The", so `Global Compass`
 also matches North's spelling, `The Global Compass`.
@@ -84,7 +95,7 @@ therefore never appear in this repo.
 ```
 Plated (public, this repo)        plated-runner (private)
   menu/                             users/wes.toml
-  users/example.toml                users/<friend>.toml
+  users.example.toml                users/<friend>.toml
   tests/                            .github/workflows/notify.yml
 ```
 

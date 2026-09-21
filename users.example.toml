@@ -1,12 +1,19 @@
-# Example subscriber file. Documentation only -- real subscriber files
-# live in the private runner repo, never in this public one.
+# Template for a subscriber file. Copy it into a `users/` directory and
+# edit, e.g. `cp users.example.toml users/wes.toml`.
 #
-# An ntfy topic is open pub/sub: anyone who knows the name can both read
-# your notifications and publish fake ones to your phone. Treat it like a
-# password and use something unguessable.
+# This template deliberately lives OUTSIDE `users/`, because `dispatch`
+# sends to every file in that directory -- a placeholder left there would
+# push real notifications to the guessable topic below.
+#
+# `users/` is gitignored here. Real subscriber files belong in the
+# private runner repo. An ntfy topic is open pub/sub: anyone who knows
+# the name can both read your notifications and publish fake ones to your
+# phone, so treat it like a password and generate something unguessable:
+#
+#     python3 -c "import secrets; print('plated-' + secrets.token_urlsafe(12))"
 
 name = "Example"
-ntfy_topic = "plated-example-change-me"
+ntfy_topic = "CHANGE-ME-to-something-unguessable"
 
 # Eastern time; South Bend observes it. DST is handled automatically.
 timezone = "America/New_York"

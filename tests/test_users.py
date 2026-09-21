@@ -11,7 +11,7 @@ from menu.users import (
     parse_user,
 )
 
-REPO_EXAMPLE = Path(__file__).parent.parent / "users" / "example.toml"
+REPO_EXAMPLE = Path(__file__).parent.parent / "users.example.toml"
 
 MINIMAL = {"name": "Wes", "ntfy_topic": "topic-abc"}
 
@@ -64,12 +64,22 @@ def test_unknown_meal_slug_is_allowed_through():
     assert user.schedule["monday"]["tea-time"] == time(15, 0)
 
 
-def test_committed_example_file_is_valid():
-    users = load_users(REPO_EXAMPLE.parent)
+def test_committed_example_file_is_valid(tmp_path):
+    # Copy into an isolated directory: the template deliberately lives
+    # outside users/, so its own parent is the repo root.
+    (tmp_path / "wes.toml").write_text(REPO_EXAMPLE.read_text())
+    users = load_users(tmp_path)
+
     assert len(users) == 1
     example = users[0]
     assert example.schedule["sunday"]["brunch"] == time(10, 30)
     assert "Global Compass" in example.stations
+
+
+def test_only_toml_files_are_loaded(tmp_path):
+    (tmp_path / "wes.toml").write_text(REPO_EXAMPLE.read_text())
+    (tmp_path / "README.md").write_text("not a subscriber")
+    assert len(load_users(tmp_path)) == 1
 
 
 def test_missing_directory_raises():

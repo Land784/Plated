@@ -14,7 +14,9 @@ CLAUDE.md
 
 # Real subscriber files hold ntfy topics, which are open pub/sub: anyone
 # who learns the name can publish to that person's phone. They belong in
-# the private runner repo, never in this public one. Only the commented
-# example is tracked.
-users/*.toml
-!users/example.toml
+# the private runner repo, never in this public one.
+#
+# The whole directory is ignored, and the template lives outside it as
+# users.example.toml, so that `dispatch --users ./users` can never pick
+# up a placeholder file and push to a public topic.
+users/

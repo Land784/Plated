@@ -3,7 +3,12 @@
 Each subscriber is one TOML file in a directory. Real subscriber files
 live in the private runner repo, never here -- an ntfy topic is open
 pub/sub, so anyone who learns a topic name can both read it and publish
-to it. ``users/example.toml`` in this repo is documentation only.
+to it.
+
+Note that every ``*.toml`` in the directory is treated as a live
+subscriber, which is why the template is kept outside it, at
+``users.example.toml``. A placeholder left in ``users/`` would be sent
+to for real.
 
 Loading is strict and fails loudly: a malformed file raises rather than
 being skipped, because a silently skipped subscriber is a subscriber who
