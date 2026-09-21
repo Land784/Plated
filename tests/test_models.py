@@ -32,8 +32,8 @@ def test_day_menu_parses_nested_items():
         {
             "date": "2024-01-08",
             "menu_items": [
-                {"food": {"name": "Rice"}, "station": "Grill"},
-                {"is_station_header": True, "station": "Grill"},
+                {"food": {"name": "Rice"}, "station_id": 1},
+                {"is_station_header": True, "text": "Grill", "station_id": 1},
             ],
         }
     )

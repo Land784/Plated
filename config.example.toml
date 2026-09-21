@@ -1,16 +1,21 @@
 # Copy this file to config.toml and fill in your own values.
 # config.toml is gitignored -- never commit real secrets here.
 
+# Verified 2026-09-20 against https://nd.api.nutrislice.com/menu/api/schools/
+# (see menu/client.py's module docstring for how the real API host was
+# found -- it is NOT the nd.nutrislice.com host CLAUDE.md originally
+# assumed). Re-check periodically; this is still an unofficial API.
 [[dining_halls]]
-slug = "north-dining-hall"  # TODO: verify in DevTools Network tab
+slug = "north-dining-hall"
 name = "North Dining Hall"
 
 [[dining_halls]]
-slug = "south-dining-hall"  # TODO: verify in DevTools Network tab
+slug = "south-dining-hall"
 name = "South Dining Hall"
 
-# Maps a friendly meal period name to Nutrislice's menu_type slug.
-# TODO: confirm these values in DevTools before relying on them.
+# Confirmed menu_type slugs for both halls (from the /schools/
+# endpoint above): breakfast, lunch, late-lunch, dinner, brunch,
+# special. Map the friendly names you actually want to use below.
 [meal_types]
 breakfast = "breakfast"
 lunch = "lunch"
@@ -18,7 +23,11 @@ dinner = "dinner"
 
 [allergens]
 # Allergen names to exclude, matched case-insensitively against
-# whatever tag names Nutrislice reports (e.g. "Milk", "Tree Nuts").
+# whatever tag names Nutrislice reports. Confirmed real tag names in
+# use here include: Dairy, Wheat, Egg, Peanuts, Soy, Tree Nuts, Pork,
+# Sesame, Shellfish, Fish. NOTE: Nutrislice mixes these into the same
+# tag list as non-allergen tags like "Vegan"/"Vegetarian"/"High
+# Performance" -- see menu/models.py's AllergenTag docstring.
 exclude = []
 # "flag" (default) shows items with no allergen data, clearly marked.
 # "exclude" drops them instead. Missing data is NEVER treated as safe.

@@ -4,9 +4,27 @@ Everything else in this package works on the pydantic models in
 models.py, so it can be tested offline against fixtures. Tests must
 never hit the live API (see CLAUDE.md).
 
-The school_slug and menu_type values are NOT hardcoded here -- they're
-unverified (see CLAUDE.md) and must come from config.toml, confirmed
-against the DevTools Network tab first.
+VERIFIED 2026-09-20: the public-facing ``nd.nutrislice.com`` host
+(what CLAUDE.md originally assumed as the API base) is a static
+S3/CloudFront single-page-app shell with no backend of its own --
+every path under it, including ``/menu/api/*``, falls back to serving
+the same ``index.html``. The real JSON API lives on a separate
+subdomain, ``nd.api.nutrislice.com``, found by pulling the site's
+Angular JS bundle and reading the `menusApiDomain` getter, which
+derives the API host from the page's own hostname (inserting an
+"api." segment). Confirmed live via:
+
+    GET https://nd.api.nutrislice.com/menu/api/schools/
+
+which returns both dining halls with slugs "north-dining-hall" and
+"south-dining-hall", each exposing menu_type slugs "breakfast",
+"lunch", "late-lunch", "dinner", "brunch", and "special". See
+config.example.toml for the confirmed values and
+tests/fixtures/real_north_lunch_2026-09-21.json /
+tests/fixtures/real_schools_2026-09-20.json for the captured
+responses. school_slug/menu_type are still sourced from config.toml
+rather than hardcoded, since a different Nutrislice tenant would need
+different values and this could still change upstream.
 """
 
 from __future__ import annotations
@@ -21,7 +39,7 @@ import httpx
 from menu.models import WeekMenu
 
 BASE_URL = (
-    "https://nd.nutrislice.com/menu/api/weeks/school/"
+    "https://nd.api.nutrislice.com/menu/api/weeks/school/"
     "{school_slug}/menu-type/{menu_type}/{yyyy}/{mm}/{dd}/"
 )
 

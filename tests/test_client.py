@@ -58,6 +58,37 @@ def test_fetch_day_finds_matching_date(tmp_path):
     assert day.menu_items == []
 
 
+def test_fetch_week_requests_the_verified_api_host(tmp_path):
+    """Regression test for the host bug: the real API is on
+    nd.api.nutrislice.com, not nd.nutrislice.com (see menu/client.py's
+    module docstring). If BASE_URL regresses back to the wrong host,
+    this should catch it.
+    """
+    fixture = _load_fixture("sample_week.json")
+    seen_urls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_urls.append(str(request.url))
+        return httpx.Response(200, json=fixture)
+
+    test_client = httpx.Client(transport=httpx.MockTransport(handler))
+
+    client.fetch_week(
+        "north-dining-hall",
+        "lunch",
+        date(2024, 1, 8),
+        cache_dir=tmp_path,
+        use_cache=False,
+        client=test_client,
+    )
+
+    assert len(seen_urls) == 1
+    assert seen_urls[0] == (
+        "https://nd.api.nutrislice.com/menu/api/weeks/school/"
+        "north-dining-hall/menu-type/lunch/2024/01/08/"
+    )
+
+
 def test_fetch_week_uses_cache(tmp_path):
     fixture = _load_fixture("sample_week.json")
     calls = {"count": 0}
