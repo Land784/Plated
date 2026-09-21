@@ -1,0 +1,76 @@
+# Example subscriber file. Documentation only -- real subscriber files
+# live in the private runner repo, never in this public one.
+#
+# An ntfy topic is open pub/sub: anyone who knows the name can both read
+# your notifications and publish fake ones to your phone. Treat it like a
+# password and use something unguessable.
+
+name = "Example"
+ntfy_topic = "plated-example-change-me"
+
+# Eastern time; South Bend observes it. DST is handled automatically.
+timezone = "America/New_York"
+
+# North and South share only about 28% of their items on a given day, so
+# both are included by default.
+halls = ["north-dining-hall", "south-dining-hall"]
+
+# Build-your-own stations list individual ingredients rather than dishes,
+# so each station is capped and the rest collapses into "+N more".
+max_items_per_station = 4
+
+# Allowlist of stations you actually eat at. Matching ignores case and a
+# leading "The", so "Global Compass" also matches North's spelling,
+# "The Global Compass". Anything not listed here is never shown.
+stations = [
+  "Domer Diner",
+  "La Mesa",
+  "Mezze",
+  "Crust & Co",
+  "Green & Grains",
+  "Comfort Kitchen",
+  "Athenian Rice Bowl",
+  "Global Compass",
+  "Curry Bar",
+  "Harvest Bowl",
+  "Pastaria",
+  "Pasta Stir Fry",
+  "Homestyle",
+]
+
+# When to send, per weekday, in your local time. Meal keys are Nutrislice
+# menu_type slugs; the confirmed set is: breakfast, lunch, late-lunch,
+# dinner, brunch, special.
+#
+# Only the weekdays you list get notifications, so simply omitting a meal
+# is how you handle days a hall doesn't serve it.
+
+[schedule.monday]
+lunch = "11:15"
+dinner = "17:30"
+
+[schedule.tuesday]
+lunch = "12:45"
+dinner = "17:30"
+
+[schedule.wednesday]
+lunch = "11:15"
+dinner = "17:30"
+
+[schedule.thursday]
+lunch = "12:45"
+dinner = "17:30"
+
+[schedule.friday]
+lunch = "11:15"
+dinner = "17:00"
+
+[schedule.saturday]
+brunch = "10:30"
+dinner = "17:00"
+
+# Sundays serve brunch rather than lunch -- a scheduled "lunch" here
+# would find an empty menu and alert the owner.
+[schedule.sunday]
+brunch = "10:30"
+dinner = "17:00"

@@ -11,3 +11,10 @@ dist/
 build/
 .idea/
 CLAUDE.md
+
+# Real subscriber files hold ntfy topics, which are open pub/sub: anyone
+# who learns the name can publish to that person's phone. They belong in
+# the private runner repo, never in this public one. Only the commented
+# example is tracked.
+users/*.toml
+!users/example.toml
