@@ -8,9 +8,15 @@
 # `users/` is gitignored here. Real subscriber files belong in the
 # private runner repo. An ntfy topic is open pub/sub: anyone who knows
 # the name can both read your notifications and publish fake ones to your
-# phone, so treat it like a password and generate something unguessable:
+# phone, so treat it like a password and generate something unguessable.
 #
-#     python3 -c "import secrets; print('plated-' + secrets.token_urlsafe(12))"
+# Generate one with the command below. Do NOT use secrets.token_urlsafe:
+# ntfy topics are case-sensitive and get typed into a phone by hand, and
+# that alphabet mixes case and includes 0/O and 1/l/I, which people
+# reliably mistype. This alphabet excludes every confusable character.
+#
+#     python3 -c "import secrets; a='abcdefghjkmnpqrstuvwxyz23456789'; \
+#       print('plated-' + ''.join(secrets.choice(a) for _ in range(16)))"
 
 name = "Example"
 ntfy_topic = "CHANGE-ME-to-something-unguessable"
