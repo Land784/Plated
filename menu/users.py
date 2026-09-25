@@ -23,6 +23,9 @@ from datetime import time
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from menu.allergens import UnknownAllergenPolicy
+from menu.planner import DEFAULT_MAX_ITEM_CALORIES, DEFAULT_MIN_ITEM_PROTEIN_G
+
 WEEKDAYS = (
     "monday",
     "tuesday",
@@ -43,6 +46,22 @@ class UserConfigError(ValueError):
 
 
 @dataclass
+class ProteinConfig:
+    """Optional ``[protein]`` table: turns on per-hall protein picks.
+
+    Only ``target_g`` is required. The two per-item limits are the
+    planner's eligibility rules (see menu/planner.py for why they exist).
+    """
+
+    target_g: float
+    min_item_protein_g: float = DEFAULT_MIN_ITEM_PROTEIN_G
+    max_item_calories: float | None = DEFAULT_MAX_ITEM_CALORIES
+    calorie_cap: float | None = None
+    exclude_allergens: list[str] = field(default_factory=list)
+    unknown_allergens: UnknownAllergenPolicy = UnknownAllergenPolicy.FLAG
+
+
+@dataclass
 class UserConfig:
     name: str
     ntfy_topic: str
@@ -52,6 +71,8 @@ class UserConfig:
     max_items_per_station: int = DEFAULT_MAX_ITEMS
     # weekday -> meal slug -> local send time
     schedule: dict[str, dict[str, time]] = field(default_factory=dict)
+    # None means no protein picks, just the station digest.
+    protein: ProteinConfig | None = None
 
     @property
     def zoneinfo(self) -> ZoneInfo:
@@ -96,8 +117,68 @@ def _parse_schedule(raw: object, where: str) -> dict[str, dict[str, time]]:
     return schedule
 
 
+def _parse_positive_number(raw: object, where: str) -> float:
+    # bool is an int subclass; `target_g = true` is a typo, not a number.
+    if isinstance(raw, bool) or not isinstance(raw, int | float) or raw <= 0:
+        raise UserConfigError(f"{where}: expected a positive number, got {raw!r}")
+    return float(raw)
+
+
+def _parse_protein(raw: object, where: str) -> ProteinConfig | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise UserConfigError(f"{where}: [protein] must be a table")
+
+    if "target_g" not in raw:
+        raise UserConfigError(f"{where}: [protein] requires 'target_g'")
+    target = _parse_positive_number(raw["target_g"], f"{where} [protein] target_g")
+
+    floor = raw.get("min_item_protein_g", DEFAULT_MIN_ITEM_PROTEIN_G)
+    if isinstance(floor, bool) or not isinstance(floor, int | float) or floor < 0:
+        raise UserConfigError(
+            f"{where} [protein] min_item_protein_g: expected a number >= 0, got {floor!r}"
+        )
+
+    ceiling = raw.get("max_item_calories", DEFAULT_MAX_ITEM_CALORIES)
+    cap = raw.get("calorie_cap")
+
+    allergens = raw.get("exclude_allergens", [])
+    if not isinstance(allergens, list) or not all(isinstance(a, str) for a in allergens):
+        raise UserConfigError(f"{where} [protein] exclude_allergens: must be a list of strings")
+
+    policy = raw.get("unknown_allergens", UnknownAllergenPolicy.FLAG.value)
+    try:
+        unknown = UnknownAllergenPolicy(policy)
+    except ValueError as exc:
+        choices = ", ".join(p.value for p in UnknownAllergenPolicy)
+        raise UserConfigError(
+            f"{where} [protein] unknown_allergens: expected one of {choices}, got {policy!r}"
+        ) from exc
+
+    return ProteinConfig(
+        target_g=target,
+        min_item_protein_g=float(floor),
+        # A database row can null the ceiling to disable it; TOML has no null.
+        max_item_calories=(
+            None
+            if ceiling is None
+            else _parse_positive_number(ceiling, f"{where} [protein] max_item_calories")
+        ),
+        calorie_cap=(
+            None if cap is None else _parse_positive_number(cap, f"{where} [protein] calorie_cap")
+        ),
+        exclude_allergens=[a.strip() for a in allergens if a.strip()],
+        unknown_allergens=unknown,
+    )
+
+
 def parse_user(data: dict, source: str) -> UserConfig:
-    """Build a UserConfig from already-parsed TOML data."""
+    """Build a UserConfig from already-parsed TOML data or a database row.
+
+    Both sources share this one validation path; see
+    menu/supabase_users.py for the row shape.
+    """
     name = data.get("name")
     if not isinstance(name, str) or not name.strip():
         raise UserConfigError(f"{source}: 'name' is required")
@@ -128,6 +209,7 @@ def parse_user(data: dict, source: str) -> UserConfig:
         stations=list(stations),
         max_items_per_station=int(data.get("max_items_per_station", DEFAULT_MAX_ITEMS)),
         schedule=_parse_schedule(data.get("schedule"), source),
+        protein=_parse_protein(data.get("protein"), source),
     )
 
 

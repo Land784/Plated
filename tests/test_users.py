@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 
+from menu.allergens import UnknownAllergenPolicy
+from menu.planner import DEFAULT_MAX_ITEM_CALORIES, DEFAULT_MIN_ITEM_PROTEIN_G
 from menu.users import (
     DEFAULT_HALLS,
     DEFAULT_MAX_ITEMS,
@@ -85,3 +87,56 @@ def test_only_toml_files_are_loaded(tmp_path):
 def test_missing_directory_raises():
     with pytest.raises(UserConfigError, match="not found"):
         load_users(Path("/nonexistent/users/dir"))
+
+
+def test_protein_picks_are_off_without_a_protein_table():
+    assert parse_user(MINIMAL, "test.toml").protein is None
+
+
+def test_protein_table_needs_only_a_target():
+    user = parse_user({**MINIMAL, "protein": {"target_g": 70}}, "test.toml")
+    assert user.protein.target_g == 70
+    assert user.protein.min_item_protein_g == DEFAULT_MIN_ITEM_PROTEIN_G
+    assert user.protein.max_item_calories == DEFAULT_MAX_ITEM_CALORIES
+    assert user.protein.calorie_cap is None
+    assert user.protein.exclude_allergens == []
+    assert user.protein.unknown_allergens is UnknownAllergenPolicy.FLAG
+
+
+def test_protein_table_accepts_every_option():
+    user = parse_user(
+        {
+            **MINIMAL,
+            "protein": {
+                "target_g": 50,
+                "min_item_protein_g": 10,
+                "max_item_calories": 900,
+                "calorie_cap": 1000,
+                "exclude_allergens": ["Peanuts", " Shellfish "],
+                "unknown_allergens": "exclude",
+            },
+        },
+        "test.toml",
+    )
+    assert user.protein.max_item_calories == 900
+    assert user.protein.calorie_cap == 1000
+    assert user.protein.exclude_allergens == ["Peanuts", "Shellfish"]
+    assert user.protein.unknown_allergens is UnknownAllergenPolicy.EXCLUDE
+
+
+@pytest.mark.parametrize(
+    ("protein", "match"),
+    [
+        ({}, "target_g"),
+        ({"target_g": 0}, "positive number"),
+        ({"target_g": True}, "positive number"),
+        ({"target_g": "70"}, "positive number"),
+        ({"target_g": 70, "min_item_protein_g": -1}, "min_item_protein_g"),
+        ({"target_g": 70, "max_item_calories": 0}, "max_item_calories"),
+        ({"target_g": 70, "exclude_allergens": "Peanuts"}, "exclude_allergens"),
+        ({"target_g": 70, "unknown_allergens": "ignore"}, "unknown_allergens"),
+    ],
+)
+def test_malformed_protein_table_is_rejected(protein, match):
+    with pytest.raises(UserConfigError, match=match):
+        parse_user({**MINIMAL, "protein": protein}, "test.toml")

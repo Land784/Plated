@@ -9,6 +9,15 @@
   items are exactly as returned -- nothing was renamed or corrected,
   including the upstream data-quality quirks (e.g. some items report
   `serving_size_unit: "z"` instead of `"oz"`).
+- `real_north_dinner_2026-09-24.json` -- a **real** (trimmed) response
+  from North's dinner week containing 2026-09-24, captured that day.
+  Only that day is kept, and within it only the Domer Diner, Mezze and
+  Crust & Co stations, with every field of every kept row exactly as
+  returned. Chosen because it exercises everything the protein picks
+  handle: bulk-recipe rows (three whole pizzas at 2473-3996 cal, serving
+  "1 pizza"), an item whose only tag is the dietary label "High
+  Performance", tiny sides below the protein floor, and the `z` and
+  `potatoe` unit quirks.
 - `real_schools_2026-09-20.json` -- the real, full response from
   `GET https://nd.api.nutrislice.com/menu/api/schools/`, listing both
   dining halls and their confirmed `menu_type` slugs. Not currently

@@ -17,10 +17,20 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from menu.allergens import has_known_allergen_data
 from menu.models import DayMenu, MenuItem
+from menu.planner import MealPlan, PlannedItem, build_meal_plan
+from menu.users import ProteinConfig
 
 _WHITESPACE = re.compile(r"\s+")
 _LEADING_ARTICLE = re.compile(r"^the\s+")
+
+# Nutrislice mixes dietary labels into the same tag list as allergens,
+# with identical metadata (see AllergenTag in menu/models.py). These are
+# hidden from the allergen display. It is deliberately a list of known
+# NON-allergens rather than of allergens: a tag name nobody anticipated
+# stays visible instead of being silently dropped.
+_DIETARY_LABELS = frozenset({"vegan", "vegetarian", "high performance"})
 
 
 @dataclass
@@ -131,3 +141,75 @@ def build_hall_section(
     if not body:
         return []
     return [hall_name.upper(), *body]
+
+
+def _allergen_note(item: MenuItem) -> str:
+    """Allergen tags as reported, or "allergens unknown".
+
+    An item whose only tags are dietary labels ("High Performance") has
+    no allergen information at all, and reads the same as an untagged
+    item. Absence of a tag never means safe.
+    """
+    if not has_known_allergen_data(item):
+        return "allergens unknown"
+    names = [a.name for a in item.food.allergens if a.name.strip().lower() not in _DIETARY_LABELS]
+    return ", ".join(names) if names else "allergens unknown"
+
+
+def _render_pick(planned: PlannedItem) -> str:
+    food = planned.item.food
+    serving = food.serving_size if food else None
+    # Serving size is shown exactly as Nutrislice reports it, quirks and
+    # all ("4 z"), because protein is only comparable per listed serving.
+    listed = " ".join(p for p in (serving.amount, serving.unit) if p) if serving else ""
+    size = f" ({listed})" if listed else ""
+    name = food.name if food else "unknown item"
+    return (
+        f"  {name}: {planned.protein_g:g}g, {planned.calories:g} cal{size}"
+        f" - {_allergen_note(planned.item)}"
+    )
+
+
+def _plan_headline(hall_name: str, plan: MealPlan, target_g: float) -> str:
+    totals = f"{plan.total_protein_g:g}g, {plan.total_calories:g} cal"
+    if plan.target_met:
+        return f"{hall_name}: {totals}"
+    return f"{hall_name}: {totals} (best available, short of {target_g:g}g)"
+
+
+def build_protein_section(
+    halls: list[tuple[str, DayMenu | None]],
+    allowlist: list[str],
+    protein: ProteinConfig,
+) -> list[str]:
+    """Render one protein combo per hall, or [] if no hall has a pick.
+
+    Picks come only from the subscriber's allowlisted stations, and each
+    combo is planned from a single hall's items.
+    """
+    lines: list[str] = []
+    for hall_name, day in halls:
+        if day is None:
+            continue
+        items = [
+            item
+            for station in filter_stations(group_by_station(day), allowlist)
+            for item in station.items
+        ]
+        plan = build_meal_plan(
+            items,
+            excluded_allergens=set(protein.exclude_allergens),
+            protein_target_g=protein.target_g,
+            calorie_cap=protein.calorie_cap,
+            unknown_policy=protein.unknown_allergens,
+            min_item_protein_g=protein.min_item_protein_g,
+            max_item_calories=protein.max_item_calories,
+        )
+        if not plan.items:
+            continue
+        lines.append(_plan_headline(hall_name, plan, protein.target_g))
+        lines.extend(_render_pick(p) for p in plan.items)
+
+    if not lines:
+        return []
+    return [f"PROTEIN PICKS ({protein.target_g:g}g target)", *lines]

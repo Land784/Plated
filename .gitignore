@@ -20,3 +20,10 @@ CLAUDE.md
 # users.example.toml, so that `dispatch --users ./users` can never pick
 # up a placeholder file and push to a public topic.
 users/
+
+# Session handoff notes. Local working memory, not project documentation,
+# and they can quote config values, so they stay out of the repo.
+handoffs/
+
+# Local secrets (Supabase URL and secret key). Never commit.
+.env

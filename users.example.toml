@@ -51,6 +51,38 @@ stations = [
   "Homestyle",
 ]
 
+# Optional: protein picks. With this table, each notification opens with
+# one combo per hall that reaches your target, drawn only from the
+# stations above and ranked by protein per calorie. Delete the table to
+# get the plain station digest.
+#
+# Numbers are per serving exactly as Nutrislice lists them, and dining
+# hall data can be incomplete or wrong. An item with no allergen tags is
+# shown as "allergens unknown", never as safe.
+[protein]
+target_g = 70
+
+# Everything below is optional; these are the defaults.
+#
+# Items under this much protein are never picked. Without a floor, a
+# leaf of lettuce outranks a chicken breast on protein per calorie.
+# min_item_protein_g = 15
+#
+# Items over this many calories are treated as bulk recipe rows (a whole
+# 2473 cal pizza listed as one serving) and skipped, not corrected.
+# max_item_calories = 1200
+#
+# Cap on the whole combo's calories. No cap unless set.
+# calorie_cap = 900
+#
+# Tag names to exclude, matched case-insensitively. Absence of a tag is
+# never treated as safe.
+# exclude_allergens = ["Peanuts", "Shellfish"]
+#
+# What to do with items that have no allergen data when you exclude
+# allergens: "flag" (show, marked unknown) or "exclude" (drop them).
+# unknown_allergens = "flag"
+
 # When to send, per weekday, in your local time. Meal keys are Nutrislice
 # menu_type slugs; the confirmed set is: breakfast, lunch, late-lunch,
 # dinner, brunch, special.

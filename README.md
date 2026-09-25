@@ -1,7 +1,8 @@
 # Plated
 
 Pushes the Notre Dame dining hall menus to your phone, at the times you
-actually eat, filtered down to the stations you care about.
+actually eat, filtered down to the stations you care about, led by a
+high-protein combo from each hall.
 
 Menus come from Nutrislice's unofficial JSON API. Notifications go out
 over [ntfy.sh](https://ntfy.sh).
@@ -83,6 +84,68 @@ Meal keys are Nutrislice `menu_type` slugs. The confirmed set is
 Only the weekdays you list get notifications, so omitting a meal is how
 you handle days a hall doesn't serve it. Sundays serve brunch, not lunch.
 
+## Protein picks
+
+A subscriber with a `[protein]` table gets one combo per hall at the top
+of each notification:
+
+```
+PROTEIN PICKS (70g target)
+North Dining Hall: 72g, 595 cal
+  Garden Herb Grilled Chicken: 21g, 89 cal (1 tender) - allergens unknown
+  Pork Tenderloin Agrodolce: 36g, 335 cal (6 oz portion) - Dairy, Fish, Soy
+  Black Bean Veggie Burger: 15g, 171 cal (1 patty) - Soy, Wheat
+```
+
+Items come only from the subscriber's stations and are taken greedily by
+protein per calorie until the target is met. Each hall is planned on its
+own, since nobody eats at both in one meal. If a hall can't reach the
+target, its line says so and shows the best available.
+
+Two per-item rules keep the ranking honest against the real data, and
+both are configurable:
+
+- **A protein floor** (default 15g). Pure protein-per-calorie ranking
+  once made a single lettuce leaf the top pick for a 40g target.
+- **A calorie ceiling** (default 1200). Some rows are whole recipes
+  listed as one serving: a 2473 cal "Cheese Pizza", serving "1 pizza".
+  The serving unit can't tell them apart, so calories are the only
+  signal. These rows are skipped, never corrected.
+
+Serving sizes are shown exactly as listed (`4 z` and all), because
+protein is only comparable per listed serving. Tags that are dietary
+labels rather than allergens ("Vegan", "High Performance") are hidden,
+and an item with no allergen tags reads "allergens unknown", never safe.
+
+## Subscribers in Supabase
+
+In production, subscribers live in a Supabase table rather than files,
+so onboarding someone doesn't mean committing to a repo, and a future
+signup form has somewhere to write. The schema is in
+`supabase/migrations/`; its columns are the subscriber-file keys, and
+rows go through the same validation as a TOML file.
+
+`ntfy_topic` works like a password, so the table has row level security
+on and no policies: only the secret key can read it. Keep that key in
+`.env` locally (gitignored) and in the runner repo's secrets.
+
+```bash
+# .env: SUPABASE_URL=https://<ref>.supabase.co, SUPABASE_SECRET_KEY=sb_secret_...
+
+# Add or update someone: the file is validated, then upserted by topic
+uv run --env-file .env python -m menu subscribers push users/wes.toml
+
+# Who's subscribed (topics are never printed)
+uv run --env-file .env python -m menu subscribers list
+
+# Render what Supabase subscribers would get, without sending
+uv run --env-file .env python -m menu dispatch --supabase --dry-run --now 2026-09-24T17:30
+```
+
+Pushing writes every column from the validated file, so a key deleted
+from the file is cleared in the database too. `dispatch --users` still
+works for local testing.
+
 ## Deployment: two repos
 
 This repo is public and holds code only. A **separate private repo**
@@ -94,9 +157,10 @@ therefore never appear in this repo.
 
 ```
 Plated (public, this repo)        plated-runner (private)
-  menu/                             users/wes.toml
-  users.example.toml                users/<friend>.toml
-  tests/                            .github/workflows/notify.yml
+  menu/                             .github/workflows/notify.yml
+  users.example.toml                secrets: SUPABASE_URL,
+  supabase/migrations/                       SUPABASE_SECRET_KEY
+  tests/
 ```
 
 The private repo installs this package straight from `main`, so changes
@@ -124,7 +188,10 @@ jobs:
       - uses: astral-sh/setup-uv@v3
       - run: uv venv
       - run: uv pip install git+https://github.com/Land784/Plated.git@main
-      - run: uv run python -m menu dispatch --users ./users --interval 30
+      - run: uv run python -m menu dispatch --supabase --interval 30
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
 ```
 
 Scheduled GitHub runs are regularly delayed several minutes, so each run
@@ -157,6 +224,16 @@ live API.
 
 ## Not yet built
 
-Allergen filtering, nutrition in the digest, menu history, watchlist
-alerts, and any web or Discord frontend. The allergen and planner
-modules exist but are not wired into notifications.
+Menu history, watchlist alerts, and a signup frontend. History belongs
+in Supabase too: GitHub Actions runners start with an empty disk every
+run, so the SQLite history in `menu/db.py` could never persist there.
+
+## Roadmap
+
+1. Fetch and print one day's menu with protein and allergen info for each item
+2. Pydantic models and fixture-based tests
+3. Allergen filtering and protein ranking
+4. Meal planner
+5. ntfy notifications and a GitHub Actions daily run
+6. SQLite history and simple stats (e.g., which days have the best high-protein options)
+7. (Stretch) multi-user subscriptions via a Discord bot or small web UI
