@@ -16,6 +16,7 @@ this repo.
 from __future__ import annotations
 
 import os
+from datetime import date
 
 import httpx
 
@@ -39,6 +40,12 @@ COLUMNS = (
     "macros",
     "picks",
 )
+
+# Read alongside COLUMNS but never written: the database assigns it.
+SELECT_COLUMNS = ("id", *COLUMNS)
+
+# One row per (subscriber, meal, date) already sent; see menu/schedule.py.
+SENT_TABLE = "sent_meals"
 
 TIMEOUT = 15.0
 
@@ -80,7 +87,11 @@ def fetch_subscriber_rows(url: str, key: str, *, client: httpx.Client | None = N
     try:
         response = http.get(
             f"{url}/rest/v1/{TABLE}",
-            params={"select": ",".join(COLUMNS), "active": "is.true", "order": "created_at"},
+            params={
+                "select": ",".join(SELECT_COLUMNS),
+                "active": "is.true",
+                "order": "created_at",
+            },
             headers=_headers(key),
         )
     finally:
@@ -181,3 +192,58 @@ def upsert_subscriber(
             http.close()
     _raise_for_status(response, f"saving {source}")
     return user
+
+
+def _sent_key(subscriber_id: str, meal: str, local_date: date) -> dict[str, str]:
+    return {"subscriber_id": subscriber_id, "meal": meal, "local_date": local_date.isoformat()}
+
+
+def claim_send(
+    url: str,
+    key: str,
+    subscriber_id: str,
+    meal: str,
+    local_date: date,
+    *,
+    client: httpx.Client | None = None,
+) -> bool:
+    """Record that this meal is being sent. False if a run already did.
+
+    The row's primary key makes this atomic: a duplicate insert is
+    ignored and returns no rows, so two runs can never both claim it.
+    """
+    http = client or httpx.Client(timeout=TIMEOUT)
+    try:
+        response = http.post(
+            f"{url}/rest/v1/{SENT_TABLE}",
+            json=_sent_key(subscriber_id, meal, local_date),
+            headers={
+                **_headers(key),
+                "Prefer": "resolution=ignore-duplicates,return=representation",
+            },
+        )
+    finally:
+        if client is None:
+            http.close()
+    _raise_for_status(response, f"claiming {meal} on {local_date}")
+    return bool(response.json())
+
+
+def release_send(
+    url: str,
+    key: str,
+    subscriber_id: str,
+    meal: str,
+    local_date: date,
+    *,
+    client: httpx.Client | None = None,
+) -> None:
+    """Undo a claim after a failed send, so a later run retries it."""
+    params = {k: f"eq.{v}" for k, v in _sent_key(subscriber_id, meal, local_date).items()}
+    http = client or httpx.Client(timeout=TIMEOUT)
+    try:
+        response = http.delete(f"{url}/rest/v1/{SENT_TABLE}", params=params, headers=_headers(key))
+    finally:
+        if client is None:
+            http.close()
+    _raise_for_status(response, f"releasing {meal} on {local_date}")

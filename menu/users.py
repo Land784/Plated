@@ -92,6 +92,8 @@ class PicksConfig:
 class UserConfig:
     name: str
     ntfy_topic: str
+    # Supabase row id; None for a subscriber loaded from a TOML file.
+    id: str | None = None
     timezone: str = DEFAULT_TIMEZONE
     halls: list[str] = field(default_factory=lambda: list(DEFAULT_HALLS))
     stations: list[str] = field(default_factory=list)
@@ -320,9 +322,14 @@ def parse_user(data: dict, source: str) -> UserConfig:
     if not isinstance(halls, list) or not halls:
         raise UserConfigError(f"{source}: 'halls' must be a non-empty list")
 
+    subscriber_id = data.get("id")
+    if subscriber_id is not None and not isinstance(subscriber_id, str):
+        raise UserConfigError(f"{source}: 'id' must be a string")
+
     return UserConfig(
         name=name.strip(),
         ntfy_topic=topic.strip(),
+        id=subscriber_id,
         timezone=timezone,
         halls=list(halls),
         stations=list(stations),

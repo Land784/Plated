@@ -16,7 +16,7 @@ from menu.digest import build_hall_section, build_picks_section
 from menu.macros import Goal, describe_goal
 from menu.models import DayMenu, MenuItem
 from menu.notifier import ConsoleNotifier, NtfyNotifier
-from menu.schedule import due_meals
+from menu.schedule import DEFAULT_WINDOW_MINUTES, due_meals
 from menu.users import DEFAULT_TIMEZONE, MacrosConfig, PicksConfig, UserConfig, load_users
 
 
@@ -133,13 +133,6 @@ def _resolve_now(raw: str | None, tz_name: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
-def _load_subscribers(args: argparse.Namespace) -> list[UserConfig]:
-    if args.supabase:
-        url, key = supabase_users.credentials_from_env()
-        return supabase_users.load_users_from_supabase(url, key)
-    return load_users(Path(args.users))
-
-
 def _build_message(user: UserConfig, meal: str, local_date: date) -> list[str]:
     """Meal picks (if configured) followed by each hall's stations.
 
@@ -172,23 +165,46 @@ def _build_message(user: UserConfig, meal: str, local_date: date) -> list[str]:
 
 
 def cmd_dispatch(args: argparse.Namespace) -> int:
-    """Send each subscriber the menus due in this run's time slot."""
-    users = _load_subscribers(args)
+    """Send each subscriber any meal that came due within the window.
+
+    With --supabase and a real send, each meal is claimed in the
+    sent_meals table before sending, so the several runs that can see
+    the same meal (see menu/schedule.py) deliver it once.
+    """
+    credentials = supabase_users.credentials_from_env() if args.supabase else None
+    users = (
+        supabase_users.load_users_from_supabase(*credentials)
+        if credentials
+        else load_users(Path(args.users))
+    )
     now_utc = _resolve_now(args.now, args.tz)
+    claiming = credentials is not None and not args.dry_run
 
     sent = 0
     problems: list[str] = []
 
     for user in users:
-        for due in due_meals(user, now_utc, args.interval):
+        for due in due_meals(user, now_utc, args.window):
             label = f"{user.name}/{due.meal} on {due.local_date.isoformat()}"
+            claim = (user.id, due.meal, due.local_date)
+            if claiming:
+                try:
+                    if not supabase_users.claim_send(*credentials, *claim):
+                        continue  # an earlier run already sent it
+                except Exception as exc:  # noqa: BLE001 - one user must not break the rest
+                    problems.append(f"{label}: could not record the send: {exc}")
+                    continue
+
             try:
                 sections = _build_message(user, due.meal, due.local_date)
-            except Exception as exc:  # noqa: BLE001 - one user must not break the rest
+            except Exception as exc:  # noqa: BLE001
                 problems.append(f"{label}: fetch failed: {exc}")
+                _release(credentials, claim, claiming, problems, label)
                 continue
 
             if not sections:
+                # The claim stays: an unpublished menu won't appear on a
+                # retry, and reporting it once per meal is enough.
                 detail = "no stations configured" if not user.stations else "no menu published"
                 problems.append(f"{label}: nothing to send ({detail})")
                 continue
@@ -200,6 +216,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
                 sent += 1
             except Exception as exc:  # noqa: BLE001
                 problems.append(f"{label}: send failed: {exc}")
+                _release(credentials, claim, claiming, problems, label)
 
     print(f"dispatch: {sent} notification(s) sent", file=sys.stderr)
 
@@ -212,6 +229,16 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             print(f"dispatch: {problem}", file=sys.stderr)
         return 1
     return 0
+
+
+def _release(credentials, claim, claiming: bool, problems: list[str], label: str) -> None:
+    """Free a claim after a failure so the next run inside the window retries."""
+    if not claiming:
+        return
+    try:
+        supabase_users.release_send(*credentials, *claim)
+    except Exception as exc:  # noqa: BLE001
+        problems.append(f"{label}: could not release the claim, so it won't retry: {exc}")
 
 
 def cmd_subscribers_push(args: argparse.Namespace) -> int:
@@ -262,10 +289,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Load subscribers from Supabase (needs SUPABASE_URL and SUPABASE_SECRET_KEY)",
     )
     d.add_argument(
-        "--interval",
+        "--window",
+        "--interval",  # the pre-2026-09-25 slot flag, kept so old workflows still run
+        dest="window",
         type=int,
-        default=30,
-        help="Polling interval in minutes; must match the cron schedule",
+        default=DEFAULT_WINDOW_MINUTES,
+        help="Send meals whose time passed within this many minutes",
     )
     d.add_argument("--now", help="Override the clock (ISO 8601), for testing")
     d.add_argument(

@@ -203,7 +203,7 @@ The private repo's workflow:
 name: Notify
 on:
   schedule:
-    - cron: "*/30 * * * *"   # must match --interval below
+    - cron: "17 */3 * * *"   # heartbeat only; Supabase starts runs on time
   workflow_dispatch: {}
 
 jobs:
@@ -214,19 +214,43 @@ jobs:
       - uses: astral-sh/setup-uv@v3
       - run: uv venv
       - run: uv pip install git+https://github.com/Land784/Plated.git@main
-      - run: uv run python -m menu dispatch --supabase --interval 30
+      - run: uv run python -m menu dispatch --supabase
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
 ```
 
-Scheduled GitHub runs are regularly delayed several minutes, so each run
-owns a time slot rather than an exact minute: it floors its own clock to
-`--interval` and sends any meal falling inside that slot. A run delayed
-by less than one interval still lands in the right slot. GitHub's rule
-that disables scheduled workflows after 60 days without repo activity
-applies only to public repositories, so it can't stop the cron in the
-private runner.
+## Scheduling: who starts a run
+
+GitHub's own schedule can't be trusted for meal times. It is best
+effort, and in September 2026 a `*/30` cron ran only 5-6 times a day;
+since each meal needed a run inside its 30-minute slot, nothing was sent
+for four days.
+
+Runs are now started by the database. Every 5 minutes, `pg_cron` in
+Supabase checks whether any active subscriber has a meal scheduled in
+the last 5 minutes of their local time, and only then calls GitHub's
+`workflow_dispatch` API, which starts a run within seconds. That is
+about one run per scheduled meal, instead of 48 a day. The check and
+its schedule are in `supabase/migrations/`.
+
+Each run sends every meal whose time passed within the last 45 minutes
+(`--window`), so a late run still delivers, and never sends a meal
+before its time. Several runs can see the same meal, so a run first
+claims it in the `sent_meals` table; the primary key lets only one claim
+succeed. A failed send releases its claim so the next run retries.
+
+GitHub's schedule stays as a heartbeat every 3 hours: a catch-up sweep,
+and regular reads that keep the free Supabase project from being paused
+for inactivity. GitHub's rule that disables scheduled workflows after 60
+days without repo activity applies only to public repositories, so it
+can't stop the private runner.
+
+The database needs a GitHub token to start runs: a fine-grained token
+limited to `plated-runner` with Actions read and write, stored in Vault
+as `github_dispatch_token` (added in the SQL editor, never committed).
+When it expires, on-time runs stop and only the heartbeat remains, so
+renew it before then; GitHub emails a reminder.
 
 When a scheduled meal has no published menu, subscribers get nothing and
 the run exits non-zero, so GitHub emails the repo owner rather than

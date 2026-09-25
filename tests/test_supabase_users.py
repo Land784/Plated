@@ -1,4 +1,5 @@
 import json
+from datetime import date
 
 import httpx
 import pytest
@@ -6,8 +7,10 @@ import pytest
 from menu import supabase_users
 from menu.supabase_users import (
     SupabaseError,
+    claim_send,
     credentials_from_env,
     load_users_from_supabase,
+    release_send,
     upsert_subscriber,
     user_to_row,
 )
@@ -47,7 +50,7 @@ def test_rows_load_through_the_same_validation_as_files():
     request = seen[0]
     assert request.url.path == "/rest/v1/subscribers"
     assert request.url.params["active"] == "is.true"
-    assert request.url.params["select"] == ",".join(supabase_users.COLUMNS)
+    assert request.url.params["select"] == ",".join(supabase_users.SELECT_COLUMNS)
 
 
 def test_secret_key_goes_only_in_the_apikey_header():
@@ -151,3 +154,52 @@ def test_credentials_strip_a_trailing_slash(monkeypatch):
     monkeypatch.setenv("SUPABASE_SECRET_KEY", SECRET)
 
     assert credentials_from_env() == (URL, SECRET)
+
+
+def test_row_id_is_kept_but_never_written():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{**ROW, "id": "3f1c"}])
+
+    [user] = load_users_from_supabase(URL, SECRET, client=_client(handler))
+
+    assert user.id == "3f1c"
+    assert "id" not in user_to_row(user)
+
+
+@pytest.mark.parametrize(("returned", "claimed"), [([{"meal": "lunch"}], True), ([], False)])
+def test_claim_is_true_only_for_the_first_run(returned, claimed):
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(201, json=returned)
+
+    result = claim_send(URL, SECRET, "3f1c", "lunch", date(2026, 9, 25), client=_client(handler))
+
+    assert result is claimed
+    request = seen[0]
+    assert request.url.path == "/rest/v1/sent_meals"
+    assert "resolution=ignore-duplicates" in request.headers["prefer"]
+    assert json.loads(request.content) == {
+        "subscriber_id": "3f1c",
+        "meal": "lunch",
+        "local_date": "2026-09-25",
+    }
+
+
+def test_release_deletes_exactly_that_claim():
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(204)
+
+    release_send(URL, SECRET, "3f1c", "lunch", date(2026, 9, 25), client=_client(handler))
+
+    request = seen[0]
+    assert request.method == "DELETE"
+    assert dict(request.url.params) == {
+        "subscriber_id": "eq.3f1c",
+        "meal": "eq.lunch",
+        "local_date": "eq.2026-09-25",
+    }

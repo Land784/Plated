@@ -1,16 +1,19 @@
 """Decide which meals are due to send on this run.
 
-GitHub Actions cron fires on a fixed interval and is regularly delayed
-several minutes under load, so "is it time?" cannot be answered by
-comparing against an exact clock time.
+A run is due to send every meal whose scheduled time has passed within
+the last ``window`` minutes. Runs are started two ways, and neither is
+trusted to be on time:
 
-Instead each run owns one time *slot*. The run floors its own wall-clock
-time to the polling interval and sends any meal whose scheduled time
-falls inside that slot. Flooring the actual run time is what makes this
-tolerant of delay: a run that fires late but by less than one full
-interval still floors into the slot it was scheduled for. Only a delay
-longer than the whole interval can duplicate or skip a meal, which is an
-accepted tradeoff -- the failure mode is seeing a menu twice.
+- A database check in Supabase (supabase/migrations/) wakes the runner
+  within five minutes of a scheduled meal. This is the on-time path.
+- GitHub's own schedule, every few hours, as a heartbeat and catch-up
+  sweep. GitHub treats schedules as best effort: in September 2026 a
+  */30 cron ran only 5-6 times a day, so a design that needed a run
+  inside a meal's 30-minute slot sent nothing at all for four days.
+
+Looking back over a window makes a late run still deliver. Several runs
+can see the same meal, so sends are claimed in Supabase's sent_meals
+table first (menu/supabase_users.py); a meal already claimed is skipped.
 
 Everything is evaluated in the subscriber's own timezone. That matters
 for more than politeness: after about 8pm Eastern the UTC date has
@@ -21,9 +24,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 from menu.users import WEEKDAYS, UserConfig
+
+# A meal older than this is stale: lunch notifications at 2pm help no one.
+DEFAULT_WINDOW_MINUTES = 45
 
 
 @dataclass(frozen=True)
@@ -37,26 +42,22 @@ class DueMeal:
     scheduled: datetime
 
 
-def slot_bounds(
-    now_utc: datetime, tz: ZoneInfo, interval_minutes: int
-) -> tuple[datetime, datetime]:
-    """Return the [start, end) local-time slot containing ``now_utc``."""
-    if interval_minutes <= 0:
-        raise ValueError("interval_minutes must be positive")
+def due_meals(
+    user: UserConfig, now_utc: datetime, window_minutes: int = DEFAULT_WINDOW_MINUTES
+) -> list[DueMeal]:
+    """Meals whose local send time falls in (now - window, now], oldest first."""
+    if window_minutes <= 0:
+        raise ValueError("window_minutes must be positive")
 
-    local = now_utc.astimezone(tz).replace(second=0, microsecond=0)
-    start = local - timedelta(minutes=local.minute % interval_minutes)
-    return start, start + timedelta(minutes=interval_minutes)
-
-
-def due_meals(user: UserConfig, now_utc: datetime, interval_minutes: int) -> list[DueMeal]:
-    """Meals from ``user``'s schedule whose time falls in this run's slot."""
-    start, end = slot_bounds(now_utc, user.zoneinfo, interval_minutes)
-    todays = user.schedule.get(WEEKDAYS[start.weekday()], {})
+    tz = user.zoneinfo
+    now = now_utc.astimezone(tz)
+    earliest = now - timedelta(minutes=window_minutes)
 
     due: list[DueMeal] = []
-    for meal, at in sorted(todays.items(), key=lambda kv: kv[1]):
-        target = start.replace(hour=at.hour, minute=at.minute)
-        if start <= target < end:
-            due.append(DueMeal(meal=meal, local_date=start.date(), scheduled=target))
-    return due
+    # A window just after midnight reaches back into yesterday's schedule.
+    for day in sorted({earliest.date(), now.date()}):
+        for meal, at in user.schedule.get(WEEKDAYS[day.weekday()], {}).items():
+            scheduled = datetime.combine(day, at, tzinfo=tz)
+            if earliest < scheduled <= now:
+                due.append(DueMeal(meal=meal, local_date=day, scheduled=scheduled))
+    return sorted(due, key=lambda d: d.scheduled)
