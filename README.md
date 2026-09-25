@@ -197,8 +197,10 @@ jobs:
 Scheduled GitHub runs are regularly delayed several minutes, so each run
 owns a time slot rather than an exact minute: it floors its own clock to
 `--interval` and sends any meal falling inside that slot. A run delayed
-by less than one interval still lands in the right slot. Note also that
-GitHub disables scheduled workflows after 60 days without repo activity.
+by less than one interval still lands in the right slot. GitHub's rule
+that disables scheduled workflows after 60 days without repo activity
+applies only to public repositories, so it can't stop the cron in the
+private runner.
 
 When a scheduled meal has no published menu, subscribers get nothing and
 the run exits non-zero, so GitHub emails the repo owner rather than
