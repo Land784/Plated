@@ -4,10 +4,11 @@ from pathlib import Path
 import pytest
 
 from menu.allergens import UnknownAllergenPolicy
-from menu.planner import DEFAULT_MAX_ITEM_CALORIES, DEFAULT_MIN_ITEM_PROTEIN_G
+from menu.macros import Goal
 from menu.users import (
     DEFAULT_HALLS,
     DEFAULT_MAX_ITEMS,
+    PicksConfig,
     UserConfigError,
     load_users,
     parse_user,
@@ -89,54 +90,129 @@ def test_missing_directory_raises():
         load_users(Path("/nonexistent/users/dir"))
 
 
-def test_protein_picks_are_off_without_a_protein_table():
-    assert parse_user(MINIMAL, "test.toml").protein is None
+def test_picks_are_off_without_a_macros_table():
+    user = parse_user(MINIMAL, "test.toml")
+    assert user.macros is None
+    assert user.picks == PicksConfig()
 
 
-def test_protein_table_needs_only_a_target():
-    user = parse_user({**MINIMAL, "protein": {"target_g": 70}}, "test.toml")
-    assert user.protein.target_g == 70
-    assert user.protein.min_item_protein_g == DEFAULT_MIN_ITEM_PROTEIN_G
-    assert user.protein.max_item_calories == DEFAULT_MAX_ITEM_CALORIES
-    assert user.protein.calorie_cap is None
-    assert user.protein.exclude_allergens == []
-    assert user.protein.unknown_allergens is UnknownAllergenPolicy.FLAG
-
-
-def test_protein_table_accepts_every_option():
+def test_macros_parse_every_goal_type():
     user = parse_user(
         {
             **MINIMAL,
-            "protein": {
-                "target_g": 50,
+            "macros": {
+                "protein": {"target": 70, "tolerance": 5},
+                "carbs": {"max": 60},
+                "fiber": {"min": 8},
+                "sodium": {"min": 0, "max": 1500},
+            },
+        },
+        "test.toml",
+    )
+    assert user.macros.goals == {
+        "protein": Goal(target=70, tolerance=5),
+        "carbs": Goal(max=60),
+        "fiber": Goal(min=8),
+        "sodium": Goal(min=0, max=1500),
+    }
+
+
+def test_meal_overrides_merge_over_defaults_per_nutrient():
+    user = parse_user(
+        {
+            **MINIMAL,
+            "macros": {
+                "protein": {"target": 70},
+                "fat": {"max": 30},
+                "Brunch": {"protein": {"target": 50}},
+            },
+        },
+        "test.toml",
+    )
+    assert user.macros.for_meal("brunch") == {
+        "protein": Goal(target=50),
+        "fat": Goal(max=30),
+    }
+    assert user.macros.for_meal("dinner")["protein"] == Goal(target=70)
+
+
+def test_overrides_alone_are_allowed():
+    user = parse_user({**MINIMAL, "macros": {"dinner": {"protein": {"min": 40}}}}, "test.toml")
+    assert user.macros.for_meal("lunch") == {}
+    assert user.macros.for_meal("dinner") == {"protein": Goal(min=40)}
+
+
+def test_picks_table_overrides_defaults():
+    user = parse_user(
+        {
+            **MINIMAL,
+            "macros": {"protein": {"target": 50}},
+            "picks": {
                 "min_item_protein_g": 10,
                 "max_item_calories": 900,
-                "calorie_cap": 1000,
+                "max_servings_per_item": 3,
+                "max_total_servings": 5,
                 "exclude_allergens": ["Peanuts", " Shellfish "],
                 "unknown_allergens": "exclude",
             },
         },
         "test.toml",
     )
-    assert user.protein.max_item_calories == 900
-    assert user.protein.calorie_cap == 1000
-    assert user.protein.exclude_allergens == ["Peanuts", "Shellfish"]
-    assert user.protein.unknown_allergens is UnknownAllergenPolicy.EXCLUDE
+    assert user.picks == PicksConfig(
+        min_item_protein_g=10,
+        max_item_calories=900,
+        max_servings_per_item=3,
+        max_total_servings=5,
+        exclude_allergens=["Peanuts", "Shellfish"],
+        unknown_allergens=UnknownAllergenPolicy.EXCLUDE,
+    )
+
+
+def test_old_protein_table_explains_the_replacement():
+    with pytest.raises(UserConfigError, match=r"replaced by \[macros\]"):
+        parse_user({**MINIMAL, "protein": {"target_g": 70}}, "test.toml")
 
 
 @pytest.mark.parametrize(
-    ("protein", "match"),
+    ("macros", "match"),
     [
-        ({}, "target_g"),
-        ({"target_g": 0}, "positive number"),
-        ({"target_g": True}, "positive number"),
-        ({"target_g": "70"}, "positive number"),
-        ({"target_g": 70, "min_item_protein_g": -1}, "min_item_protein_g"),
-        ({"target_g": 70, "max_item_calories": 0}, "max_item_calories"),
-        ({"target_g": 70, "exclude_allergens": "Peanuts"}, "exclude_allergens"),
-        ({"target_g": 70, "unknown_allergens": "ignore"}, "unknown_allergens"),
+        ({}, "no goals"),
+        ({"protein": 70}, "expected a table"),
+        ({"protien": {"target": 70}}, "not a nutrient"),
+        ({"protein": {"goal": 70}}, "unknown key"),
+        ({"protein": {"tolerance": 5}}, "at least one of target, min, max"),
+        ({"protein": {"target": 0}}, "positive number"),
+        ({"protein": {"target": True}}, "expected a number"),
+        ({"protein": {"min": -1}}, ">= 0"),
+        ({"protein": {"min": 5, "tolerance": 2}}, "tolerance only applies"),
+        ({"protein": {"min": 90, "max": 60}}, "no allowed range"),
+        ({"fat": {"max": 30}}, "at least one target or min"),
+        ({"protein": {"target": 70}, "brunch": {"fat": {"max": 20}}}, None),
+        ({"brunch": {"fat": {"max": 20}}}, r"\[macros.brunch\] needs at least one target"),
+        ({"brunch": {"protien": {"min": 20}}}, "must be a nutrient goal or a meal override"),
     ],
 )
-def test_malformed_protein_table_is_rejected(protein, match):
+def test_malformed_macros_are_rejected(macros, match):
+    if match is None:
+        parse_user({**MINIMAL, "macros": macros}, "test.toml")  # valid: inherits protein
+        return
     with pytest.raises(UserConfigError, match=match):
-        parse_user({**MINIMAL, "protein": protein}, "test.toml")
+        parse_user({**MINIMAL, "macros": macros}, "test.toml")
+
+
+@pytest.mark.parametrize(
+    ("picks", "match"),
+    [
+        ({"max_servings": 2}, "unknown key"),
+        ({"min_item_protein_g": -1}, "min_item_protein_g"),
+        ({"max_item_calories": 0}, "max_item_calories"),
+        ({"max_servings_per_item": 0}, "max_servings_per_item"),
+        ({"max_total_servings": 6}, "max_total_servings"),
+        ({"max_total_servings": 2.5}, "max_total_servings"),
+        ({"exclude_allergens": "Peanuts"}, "exclude_allergens"),
+        ({"unknown_allergens": "ignore"}, "unknown_allergens"),
+    ],
+)
+def test_malformed_picks_are_rejected(picks, match):
+    with pytest.raises(UserConfigError, match=match):
+        parse_user({**MINIMAL, "macros": {"protein": {"target": 70}}, "picks": picks}, "test.toml")

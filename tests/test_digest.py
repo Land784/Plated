@@ -3,14 +3,15 @@ from pathlib import Path
 
 from menu.digest import (
     build_hall_section,
-    build_protein_section,
+    build_picks_section,
     filter_stations,
     group_by_station,
     normalize_station,
     render_stations,
 )
+from menu.macros import Goal
 from menu.models import DayMenu, WeekMenu
-from menu.users import ProteinConfig
+from menu.users import MacrosConfig, PicksConfig
 
 FIXTURE = Path(__file__).parent / "fixtures" / "real_north_lunch_2026-09-21.json"
 DINNER = Path(__file__).parent / "fixtures" / "real_north_dinner_2026-09-24.json"
@@ -133,36 +134,49 @@ def _food(name: str, protein: float, calories: float, tags: list[str] | None = N
         "station_id": 1,
         "food": {
             "name": name,
-            "rounded_nutrition_info": {"g_protein": protein, "calories": calories},
+            "rounded_nutrition_info": {
+                "g_protein": protein,
+                "calories": calories,
+                "g_carbs": 0,
+                "g_fat": 0,
+            },
             "icons": {"food_icons": [{"name": t} for t in (tags or [])]},
         },
     }
 
 
-def test_protein_section_renders_the_real_dinner_combo():
-    lines = build_protein_section(
-        [("North Dining Hall", _real_dinner())], DINNER_STATIONS, ProteinConfig(target_g=70)
-    )
+PROTEIN_70 = MacrosConfig(goals={"protein": Goal(target=70)})
+
+
+def _picks(halls, allowlist, macros=PROTEIN_70, picks=None, meal="dinner"):
+    return build_picks_section(halls, allowlist, macros, picks or PicksConfig(), meal)
+
+
+def test_picks_section_renders_the_real_dinner_combo():
+    lines = _picks([("North Dining Hall", _real_dinner())], DINNER_STATIONS)
     assert lines == [
-        "PROTEIN PICKS (70g target)",
-        "North Dining Hall: 72g, 595 cal",
+        "PICKS: protein 60-80g",
+        "North Dining Hall: 78P 12C 16F · 513 cal",
+        "  2× Garden Herb Grilled Chicken",
         # Only tag is "High Performance", a dietary label, so no allergen
         # information exists for this item.
-        "  Garden Herb Grilled Chicken: 21g, 89 cal (1 tender) - allergens unknown",
-        "  Pork Tenderloin Agrodolce: 36g, 335 cal (6 oz portion) - Dairy, Fish, Soy",
-        "  Black Bean Veggie Burger: 15g, 171 cal (1 patty) - Soy, Wheat",
+        "     21P 0C 0F · 89 cal (1 tender) · allergens unknown",
+        "  Pork Tenderloin Agrodolce",
+        "     36P 12C 16F · 335 cal (6 oz portion) · Dairy, Fish, Soy",
     ]
 
 
-def test_protein_section_only_draws_from_allowlisted_stations():
+def test_picks_only_draw_from_allowlisted_stations():
     # Crust & Co's only rows are bulk whole pizzas, none of them rankable.
-    lines = build_protein_section(
-        [("North Dining Hall", _real_dinner())], ["Crust & Co"], ProteinConfig(target_g=70)
-    )
-    assert lines == []
+    assert _picks([("North Dining Hall", _real_dinner())], ["Crust & Co"]) == []
 
 
-def test_protein_section_plans_each_hall_separately():
+def test_every_station_is_used_without_an_allowlist():
+    lines = _picks([("North Dining Hall", _real_dinner())], None)
+    assert lines[1] == "North Dining Hall: 78P 12C 16F · 513 cal"
+
+
+def test_each_hall_gets_its_own_combo_and_misses_are_explained():
     north = _day(
         [
             {"is_station_header": True, "text": "Grill", "station_id": 1},
@@ -175,16 +189,32 @@ def test_protein_section_plans_each_hall_separately():
             _food("South Steak", 30, 400, ["Dairy"]),
         ]
     )
-    lines = build_protein_section(
-        [("North", north), ("South", south)], ["Grill"], ProteinConfig(target_g=60)
-    )
+    macros = MacrosConfig(goals={"protein": Goal(min=100)})
+    lines = _picks([("North", north), ("South", south)], ["Grill"], macros=macros)
     assert lines == [
-        "PROTEIN PICKS (60g target)",
-        "North: 40g, 300 cal (best available, short of 60g)",
-        "  North Chicken: 40g, 300 cal - Soy",
-        "South: 30g, 400 cal (best available, short of 60g)",
-        "  South Steak: 30g, 400 cal - Dairy",
+        "PICKS: protein ≥100g",
+        "North: 80P 0C 0F · 600 cal",
+        "  closest available: protein 80g (want ≥100g)",
+        "  2× North Chicken",
+        "     40P 0C 0F · 300 cal · Soy",
+        "South: 60P 0C 0F · 800 cal",
+        "  closest available: protein 60g (want ≥100g)",
+        "  2× South Steak",
+        "     30P 0C 0F · 400 cal · Dairy",
     ]
+
+
+def test_meal_override_goals_are_used_for_that_meal():
+    macros = MacrosConfig(
+        goals={"protein": Goal(target=70)}, meals={"brunch": {"protein": Goal(target=30)}}
+    )
+    lines = _picks([("North", _real_dinner())], DINNER_STATIONS, macros=macros, meal="brunch")
+    assert lines[0] == "PICKS: protein 26-34g"
+
+
+def test_no_goals_for_a_meal_means_no_picks():
+    macros = MacrosConfig(meals={"dinner": {"protein": Goal(min=40)}})
+    assert _picks([("North", _real_dinner())], DINNER_STATIONS, macros=macros, meal="lunch") == []
 
 
 def test_excluded_allergens_are_dropped_from_picks():
@@ -195,12 +225,15 @@ def test_excluded_allergens_are_dropped_from_picks():
             _food("Chicken Bowl", 30, 300, ["Soy"]),
         ]
     )
-    lines = build_protein_section(
-        [("North", day)], ["Grill"], ProteinConfig(target_g=30, exclude_allergens=["shellfish"])
+    lines = _picks(
+        [("North", day)],
+        ["Grill"],
+        macros=MacrosConfig(goals={"protein": Goal(min=30)}),
+        picks=PicksConfig(exclude_allergens=["shellfish"]),
     )
     assert "Shrimp Bowl" not in "\n".join(lines)
-    assert "  Chicken Bowl: 30g, 300 cal - Soy" in lines
+    assert "  Chicken Bowl" in lines
 
 
-def test_protein_section_skips_halls_with_no_menu():
-    assert build_protein_section([("North", None)], ["Grill"], ProteinConfig(target_g=30)) == []
+def test_picks_skip_halls_with_no_menu():
+    assert _picks([("North", None)], ["Grill"]) == []

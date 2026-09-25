@@ -25,7 +25,8 @@ ROW = {
     "stations": ["Domer Diner"],
     "max_items_per_station": 4,
     "schedule": {"monday": {"lunch": "11:15"}},
-    "protein": {"target_g": 70},
+    "macros": {"protein": {"target": 70}, "brunch": {"protein": {"target": 50}}},
+    "picks": {"max_servings_per_item": 3},
 }
 
 
@@ -98,7 +99,7 @@ def test_upsert_writes_every_column_matched_on_topic():
         seen.append(request)
         return httpx.Response(201)
 
-    # No [protein] table, plus a key that is not a column.
+    # No [macros] table, plus a key that is not a column.
     data = {"name": "Wes", "ntfy_topic": "topic-abc", "nickname": "W"}
     upsert_subscriber(URL, SECRET, data, source="wes.toml", client=_client(handler))
 
@@ -108,8 +109,10 @@ def test_upsert_writes_every_column_matched_on_topic():
     assert "resolution=merge-duplicates" in request.headers["prefer"]
     body = json.loads(request.content)
     assert set(body) == set(supabase_users.COLUMNS)
-    # Written explicitly so re-pushing a file without [protein] clears it.
-    assert body["protein"] is None
+    # Written explicitly so re-pushing a file without [macros] clears it.
+    assert body["macros"] is None
+    # Picks defaults are written out in full.
+    assert body["picks"]["max_servings_per_item"] == 2
     assert body["halls"] == ["north-dining-hall", "south-dining-hall"]
 
 
@@ -117,9 +120,15 @@ def test_row_round_trips_through_parse_user():
     user = parse_user(
         {
             **ROW,
-            "protein": {
-                "target_g": 70,
-                "calorie_cap": 1000,
+            "macros": {
+                "protein": {"target": 70, "tolerance": 5},
+                "fat": {"max": 30},
+                "fiber": {"min": 8},
+                "brunch": {"protein": {"target": 50}},
+            },
+            "picks": {
+                "max_item_calories": 900,
+                "max_total_servings": 5,
                 "exclude_allergens": ["Peanuts"],
                 "unknown_allergens": "exclude",
             },

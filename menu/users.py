@@ -24,7 +24,14 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from menu.allergens import UnknownAllergenPolicy
-from menu.planner import DEFAULT_MAX_ITEM_CALORIES, DEFAULT_MIN_ITEM_PROTEIN_G
+from menu.macros import NUTRIENTS, Goal
+from menu.planner import (
+    DEFAULT_MAX_ITEM_CALORIES,
+    DEFAULT_MAX_SERVINGS_PER_ITEM,
+    DEFAULT_MAX_TOTAL_SERVINGS,
+    DEFAULT_MIN_ITEM_PROTEIN_G,
+    MAX_TOTAL_SERVINGS_LIMIT,
+)
 
 WEEKDAYS = (
     "monday",
@@ -45,18 +52,38 @@ class UserConfigError(ValueError):
     """Raised when a subscriber file is malformed."""
 
 
-@dataclass
-class ProteinConfig:
-    """Optional ``[protein]`` table: turns on per-hall protein picks.
+GOAL_KEYS = ("target", "min", "max", "tolerance")
 
-    Only ``target_g`` is required. The two per-item limits are the
-    planner's eligibility rules (see menu/planner.py for why they exist).
+
+@dataclass
+class MacrosConfig:
+    """The ``[macros]`` table: nutrient goals that turn on meal picks.
+
+    ``goals`` apply to every meal. ``meals`` holds per-meal overrides
+    (``[macros.brunch]``), merged over ``goals`` one nutrient at a time,
+    so an override that only sets protein keeps the default fat limit.
     """
 
-    target_g: float
+    goals: dict[str, Goal] = field(default_factory=dict)
+    meals: dict[str, dict[str, Goal]] = field(default_factory=dict)
+
+    def for_meal(self, meal: str) -> dict[str, Goal]:
+        return {**self.goals, **self.meals.get(meal, {})}
+
+
+@dataclass
+class PicksConfig:
+    """The ``[picks]`` table: how picks are chosen, not what they aim for.
+
+    Every field has a default, so the table is optional. The protein
+    floor and calorie ceiling are the planner's eligibility rules (see
+    menu/planner.py for why they exist).
+    """
+
     min_item_protein_g: float = DEFAULT_MIN_ITEM_PROTEIN_G
     max_item_calories: float | None = DEFAULT_MAX_ITEM_CALORIES
-    calorie_cap: float | None = None
+    max_servings_per_item: int = DEFAULT_MAX_SERVINGS_PER_ITEM
+    max_total_servings: int = DEFAULT_MAX_TOTAL_SERVINGS
     exclude_allergens: list[str] = field(default_factory=list)
     unknown_allergens: UnknownAllergenPolicy = UnknownAllergenPolicy.FLAG
 
@@ -71,8 +98,9 @@ class UserConfig:
     max_items_per_station: int = DEFAULT_MAX_ITEMS
     # weekday -> meal slug -> local send time
     schedule: dict[str, dict[str, time]] = field(default_factory=dict)
-    # None means no protein picks, just the station digest.
-    protein: ProteinConfig | None = None
+    # None means no meal picks, just the station digest.
+    macros: MacrosConfig | None = None
+    picks: PicksConfig = field(default_factory=PicksConfig)
 
     @property
     def zoneinfo(self) -> ZoneInfo:
@@ -117,60 +145,144 @@ def _parse_schedule(raw: object, where: str) -> dict[str, dict[str, time]]:
     return schedule
 
 
-def _parse_positive_number(raw: object, where: str) -> float:
-    # bool is an int subclass; `target_g = true` is a typo, not a number.
-    if isinstance(raw, bool) or not isinstance(raw, int | float) or raw <= 0:
-        raise UserConfigError(f"{where}: expected a positive number, got {raw!r}")
+def _parse_number(raw: object, where: str, *, allow_zero: bool) -> float:
+    # bool is an int subclass; `target = true` is a typo, not a number.
+    if isinstance(raw, bool) or not isinstance(raw, int | float):
+        raise UserConfigError(f"{where}: expected a number, got {raw!r}")
+    if raw < 0 or (raw == 0 and not allow_zero):
+        wanted = "a number >= 0" if allow_zero else "a positive number"
+        raise UserConfigError(f"{where}: expected {wanted}, got {raw!r}")
     return float(raw)
 
 
-def _parse_protein(raw: object, where: str) -> ProteinConfig | None:
+def _parse_whole(raw: object, where: str, *, low: int, high: int) -> int:
+    if isinstance(raw, bool) or not isinstance(raw, int) or not low <= raw <= high:
+        raise UserConfigError(f"{where}: expected a whole number from {low} to {high}, got {raw!r}")
+    return raw
+
+
+def _parse_goal(raw: object, where: str) -> Goal:
+    if not isinstance(raw, dict):
+        raise UserConfigError(f"{where}: expected a table like {{ target = 70 }}, got {raw!r}")
+    unknown = set(raw) - set(GOAL_KEYS)
+    if unknown:
+        raise UserConfigError(
+            f"{where}: unknown key(s) {', '.join(sorted(unknown))}; use {', '.join(GOAL_KEYS)}"
+        )
+    if not raw.keys() & {"target", "min", "max"}:
+        raise UserConfigError(f"{where}: needs at least one of target, min, max")
+
+    parts = {
+        key: _parse_number(raw[key], f"{where} {key}", allow_zero=key != "target")
+        for key in GOAL_KEYS
+        if key in raw
+    }
+    if "tolerance" in parts and "target" not in parts:
+        raise UserConfigError(f"{where}: tolerance only applies to a target")
+    goal = Goal(**parts)
+    low, high = goal.bounds()
+    if low > high:
+        raise UserConfigError(f"{where}: min, max and target leave no allowed range")
+    return goal
+
+
+def _parse_goal_table(raw: dict, where: str) -> dict[str, Goal]:
+    return {nutrient: _parse_goal(value, f"{where}.{nutrient}") for nutrient, value in raw.items()}
+
+
+def _parse_macros(raw: object, where: str) -> MacrosConfig | None:
     if raw is None:
         return None
     if not isinstance(raw, dict):
-        raise UserConfigError(f"{where}: [protein] must be a table")
+        raise UserConfigError(f"{where}: [macros] must be a table")
 
-    if "target_g" not in raw:
-        raise UserConfigError(f"{where}: [protein] requires 'target_g'")
-    target = _parse_positive_number(raw["target_g"], f"{where} [protein] target_g")
+    nutrients = ", ".join(NUTRIENTS)
+    config = MacrosConfig()
+    for key, value in raw.items():
+        if key in NUTRIENTS:
+            config.goals[key] = _parse_goal(value, f"{where} macros.{key}")
+        elif isinstance(value, dict) and value and set(value) <= set(NUTRIENTS):
+            # A meal override such as [macros.brunch]. Meal slugs are not
+            # validated, matching [schedule].
+            config.meals[key.strip().lower()] = _parse_goal_table(value, f"{where} macros.{key}")
+        elif isinstance(value, dict) and set(value) <= set(GOAL_KEYS):
+            raise UserConfigError(
+                f"{where}: macros.{key} is not a nutrient; choose from {nutrients}"
+            )
+        else:
+            raise UserConfigError(
+                f"{where}: macros.{key} must be a nutrient goal or a meal override whose "
+                f"keys are nutrients ({nutrients})"
+            )
 
-    floor = raw.get("min_item_protein_g", DEFAULT_MIN_ITEM_PROTEIN_G)
-    if isinstance(floor, bool) or not isinstance(floor, int | float) or floor < 0:
+    sets = {"[macros]": config.goals} if config.goals else {}
+    sets.update({f"[macros.{m}]": config.for_meal(m) for m in config.meals})
+    if not sets:
+        raise UserConfigError(f"{where}: [macros] has no goals")
+    for label, goals in sets.items():
+        if not any(g.drives_picks for g in goals.values()):
+            raise UserConfigError(
+                f"{where}: {label} needs at least one target or min; "
+                "limits alone are met by eating nothing"
+            )
+    return config
+
+
+def _parse_picks(raw: object, where: str) -> PicksConfig:
+    if raw is None:
+        return PicksConfig()
+    if not isinstance(raw, dict):
+        raise UserConfigError(f"{where}: [picks] must be a table")
+    known = set(PicksConfig.__dataclass_fields__)
+    unknown = set(raw) - known
+    if unknown:
         raise UserConfigError(
-            f"{where} [protein] min_item_protein_g: expected a number >= 0, got {floor!r}"
+            f"{where}: [picks] unknown key(s) {', '.join(sorted(unknown))}; "
+            f"use {', '.join(sorted(known))}"
         )
 
-    ceiling = raw.get("max_item_calories", DEFAULT_MAX_ITEM_CALORIES)
-    cap = raw.get("calorie_cap")
-
-    allergens = raw.get("exclude_allergens", [])
-    if not isinstance(allergens, list) or not all(isinstance(a, str) for a in allergens):
-        raise UserConfigError(f"{where} [protein] exclude_allergens: must be a list of strings")
-
-    policy = raw.get("unknown_allergens", UnknownAllergenPolicy.FLAG.value)
-    try:
-        unknown = UnknownAllergenPolicy(policy)
-    except ValueError as exc:
-        choices = ", ".join(p.value for p in UnknownAllergenPolicy)
-        raise UserConfigError(
-            f"{where} [protein] unknown_allergens: expected one of {choices}, got {policy!r}"
-        ) from exc
-
-    return ProteinConfig(
-        target_g=target,
-        min_item_protein_g=float(floor),
+    config = PicksConfig()
+    if "min_item_protein_g" in raw:
+        config.min_item_protein_g = _parse_number(
+            raw["min_item_protein_g"], f"{where} [picks] min_item_protein_g", allow_zero=True
+        )
+    if "max_item_calories" in raw:
         # A database row can null the ceiling to disable it; TOML has no null.
-        max_item_calories=(
+        ceiling = raw["max_item_calories"]
+        config.max_item_calories = (
             None
             if ceiling is None
-            else _parse_positive_number(ceiling, f"{where} [protein] max_item_calories")
-        ),
-        calorie_cap=(
-            None if cap is None else _parse_positive_number(cap, f"{where} [protein] calorie_cap")
-        ),
-        exclude_allergens=[a.strip() for a in allergens if a.strip()],
-        unknown_allergens=unknown,
-    )
+            else _parse_number(ceiling, f"{where} [picks] max_item_calories", allow_zero=False)
+        )
+    if "max_servings_per_item" in raw:
+        config.max_servings_per_item = _parse_whole(
+            raw["max_servings_per_item"],
+            f"{where} [picks] max_servings_per_item",
+            low=1,
+            high=MAX_TOTAL_SERVINGS_LIMIT,
+        )
+    if "max_total_servings" in raw:
+        config.max_total_servings = _parse_whole(
+            raw["max_total_servings"],
+            f"{where} [picks] max_total_servings",
+            low=1,
+            high=MAX_TOTAL_SERVINGS_LIMIT,
+        )
+    if "exclude_allergens" in raw:
+        allergens = raw["exclude_allergens"]
+        if not isinstance(allergens, list) or not all(isinstance(a, str) for a in allergens):
+            raise UserConfigError(f"{where} [picks] exclude_allergens: must be a list of strings")
+        config.exclude_allergens = [a.strip() for a in allergens if a.strip()]
+    if "unknown_allergens" in raw:
+        policy = raw["unknown_allergens"]
+        try:
+            config.unknown_allergens = UnknownAllergenPolicy(policy)
+        except ValueError as exc:
+            choices = ", ".join(p.value for p in UnknownAllergenPolicy)
+            raise UserConfigError(
+                f"{where} [picks] unknown_allergens: expected one of {choices}, got {policy!r}"
+            ) from exc
+    return config
 
 
 def parse_user(data: dict, source: str) -> UserConfig:
@@ -186,6 +298,13 @@ def parse_user(data: dict, source: str) -> UserConfig:
     topic = data.get("ntfy_topic")
     if not isinstance(topic, str) or not topic.strip():
         raise UserConfigError(f"{source}: 'ntfy_topic' is required")
+
+    if "protein" in data:
+        raise UserConfigError(
+            f"{source}: the [protein] table was replaced by [macros] (goals such as "
+            "protein = { target = 70 }) and [picks] (item limits and allergens); "
+            "see users.example.toml"
+        )
 
     timezone = data.get("timezone", DEFAULT_TIMEZONE)
     try:
@@ -209,7 +328,8 @@ def parse_user(data: dict, source: str) -> UserConfig:
         stations=list(stations),
         max_items_per_station=int(data.get("max_items_per_station", DEFAULT_MAX_ITEMS)),
         schedule=_parse_schedule(data.get("schedule"), source),
-        protein=_parse_protein(data.get("protein"), source),
+        macros=_parse_macros(data.get("macros"), source),
+        picks=_parse_picks(data.get("picks"), source),
     )
 
 

@@ -2,7 +2,7 @@
 
 Pushes the Notre Dame dining hall menus to your phone, at the times you
 actually eat, filtered down to the stations you care about, led by a
-high-protein combo from each hall.
+combo from each hall built for your own macro goals.
 
 Menus come from Nutrislice's unofficial JSON API. Notifications go out
 over [ntfy.sh](https://ntfy.sh).
@@ -84,36 +84,62 @@ Meal keys are Nutrislice `menu_type` slugs. The confirmed set is
 Only the weekdays you list get notifications, so omitting a meal is how
 you handle days a hall doesn't serve it. Sundays serve brunch, not lunch.
 
-## Protein picks
+## Meal picks
 
-A subscriber with a `[protein]` table gets one combo per hall at the top
-of each notification:
+A subscriber with a `[macros]` table gets one combo per hall at the top
+of each notification, built for their own nutrient goals:
+
+```toml
+[macros]
+protein = { target = 70 }   # within 15%, or set tolerance = 10
+carbs   = { max = 60 }
+fiber   = { min = 8 }
+
+[macros.brunch]             # per-meal override, merged per nutrient
+protein = { target = 50 }
+```
+
+Goals can be set on protein, carbs, fat, calories, fiber, sugar and
+sodium: every item at the tracked stations reports all seven. Each goal
+is any mix of `target`, `min` and `max`, and at least one target or min
+is required, since limits alone are met by eating nothing.
 
 ```
-PROTEIN PICKS (70g target)
-North Dining Hall: 72g, 595 cal
-  Garden Herb Grilled Chicken: 21g, 89 cal (1 tender) - allergens unknown
-  Pork Tenderloin Agrodolce: 36g, 335 cal (6 oz portion) - Dairy, Fish, Soy
-  Black Bean Veggie Burger: 15g, 171 cal (1 patty) - Soy, Wheat
+PICKS: protein 60-80g
+North Dining Hall: 78P 12C 16F · 513 cal
+  2× Garden Herb Grilled Chicken
+     21P 0C 0F · 89 cal (1 tender) · allergens unknown
+  Pork Tenderloin Agrodolce
+     36P 12C 16F · 335 cal (6 oz portion) · Dairy, Fish, Soy
 ```
 
-Items come only from the subscriber's stations and are taken greedily by
-protein per calorie until the target is met. Each hall is planned on its
-own, since nobody eats at both in one meal. If a hall can't reach the
-target, its line says so and shows the best available.
+Items come only from the subscriber's stations, and each hall is
+planned on its own, since nobody eats at both in one meal. The planner
+searches every combo of up to 4 servings, with at most 2 of any item,
+and of those meeting every goal picks the one supplying the most of
+what was asked for per calorie; for a lone protein goal, protein per
+calorie. If nothing meets every goal, the closest combo is shown with a
+line naming what it misses.
 
-Two per-item rules keep the ranking honest against the real data, and
-both are configurable:
+Ranking by fewest calories was tried first and rejected: it always
+landed at the bottom of a target's range, choosing 62g protein for 507
+cal over 78g for 513.
 
-- **A protein floor** (default 15g). Pure protein-per-calorie ranking
-  once made a single lettuce leaf the top pick for a 40g target.
+Three per-item rules keep the search honest against the real data, set
+in the optional `[picks]` table:
+
+- **Missing values are never guessed.** An item that doesn't report a
+  nutrient you have a goal on isn't ranked. A reported 0 is used as 0.
+- **A protein floor** (default 15g), applied when you have a protein
+  goal. Pure protein-per-calorie ranking once made a single lettuce
+  leaf the top pick for a 40g target.
 - **A calorie ceiling** (default 1200). Some rows are whole recipes
   listed as one serving: a 2473 cal "Cheese Pizza", serving "1 pizza".
   The serving unit can't tell them apart, so calories are the only
   signal. These rows are skipped, never corrected.
 
-Serving sizes are shown exactly as listed (`4 z` and all), because
-protein is only comparable per listed serving. Tags that are dietary
+Numbers are one serving exactly as listed (`4 z` and all), because
+nutrients are only comparable per listed serving. Tags that are dietary
 labels rather than allergens ("Vegan", "High Performance") are hidden,
 and an item with no allergen tags reads "allergens unknown", never safe.
 

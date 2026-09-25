@@ -18,9 +18,10 @@ import re
 from dataclasses import dataclass, field
 
 from menu.allergens import has_known_allergen_data
+from menu.macros import describe_goal
 from menu.models import DayMenu, MenuItem
-from menu.planner import MealPlan, PlannedItem, build_meal_plan
-from menu.users import ProteinConfig
+from menu.planner import MealPlan, PlannedItem, plan_meal
+from menu.users import MacrosConfig, PicksConfig
 
 _WHITESPACE = re.compile(r"\s+")
 _LEADING_ARTICLE = re.compile(r"^the\s+")
@@ -156,60 +157,82 @@ def _allergen_note(item: MenuItem) -> str:
     return ", ".join(names) if names else "allergens unknown"
 
 
-def _render_pick(planned: PlannedItem) -> str:
-    food = planned.item.food
-    serving = food.serving_size if food else None
-    # Serving size is shown exactly as Nutrislice reports it, quirks and
-    # all ("4 z"), because protein is only comparable per listed serving.
-    listed = " ".join(p for p in (serving.amount, serving.unit) if p) if serving else ""
-    size = f" ({listed})" if listed else ""
-    name = food.name if food else "unknown item"
+def _amount(value: float | None, suffix: str) -> str:
+    return f"{value:g}{suffix}" if value is not None else f"?{suffix}"
+
+
+def _macro_line(values: dict[str, float | None]) -> str:
+    """ "21P 0C 0F · 89 cal"; a nutrient Nutrislice left out shows as "?"."""
     return (
-        f"  {name}: {planned.protein_g:g}g, {planned.calories:g} cal{size}"
-        f" - {_allergen_note(planned.item)}"
+        f"{_amount(values['protein'], 'P')} {_amount(values['carbs'], 'C')} "
+        f"{_amount(values['fat'], 'F')} · {_amount(values['calories'], ' cal')}"
     )
 
 
-def _plan_headline(hall_name: str, plan: MealPlan, target_g: float) -> str:
-    totals = f"{plan.total_protein_g:g}g, {plan.total_calories:g} cal"
-    if plan.target_met:
-        return f"{hall_name}: {totals}"
-    return f"{hall_name}: {totals} (best available, short of {target_g:g}g)"
+def _render_pick(planned: PlannedItem) -> list[str]:
+    food = planned.item.food
+    serving = food.serving_size if food else None
+    # Numbers are one serving exactly as Nutrislice lists it, quirks and
+    # all ("4 z"), because nutrients are only comparable per listed serving.
+    listed = " ".join(p for p in (serving.amount, serving.unit) if p) if serving else ""
+    size = f" ({listed})" if listed else ""
+    name = food.name if food else "unknown item"
+    count = f"{planned.servings}× " if planned.servings > 1 else ""
+    return [
+        f"  {count}{name}",
+        f"     {_macro_line(planned.per_serving)}{size} · {_allergen_note(planned.item)}",
+    ]
 
 
-def build_protein_section(
+def _plan_headline(hall_name: str, plan: MealPlan) -> list[str]:
+    headline = f"{hall_name}: {_macro_line(plan.totals)}"
+    if plan.goals_met:
+        return [headline]
+    return [headline, f"  closest available: {', '.join(plan.misses)}"]
+
+
+def build_picks_section(
     halls: list[tuple[str, DayMenu | None]],
-    allowlist: list[str],
-    protein: ProteinConfig,
+    allowlist: list[str] | None,
+    macros: MacrosConfig,
+    picks: PicksConfig,
+    meal: str,
 ) -> list[str]:
-    """Render one protein combo per hall, or [] if no hall has a pick.
+    """Render one combo per hall for ``meal``'s goals, or [] if none.
 
-    Picks come only from the subscriber's allowlisted stations, and each
-    combo is planned from a single hall's items.
+    Picks come only from the allowlisted stations (every station when
+    ``allowlist`` is None), and each combo is planned from a single
+    hall's items.
     """
+    goals = macros.for_meal(meal)
+    if not goals:
+        return []
+
     lines: list[str] = []
     for hall_name, day in halls:
         if day is None:
             continue
-        items = [
-            item
-            for station in filter_stations(group_by_station(day), allowlist)
-            for item in station.items
-        ]
-        plan = build_meal_plan(
+        stations = group_by_station(day)
+        if allowlist is not None:
+            stations = filter_stations(stations, allowlist)
+        items = [item for station in stations for item in station.items]
+        plan = plan_meal(
             items,
-            excluded_allergens=set(protein.exclude_allergens),
-            protein_target_g=protein.target_g,
-            calorie_cap=protein.calorie_cap,
-            unknown_policy=protein.unknown_allergens,
-            min_item_protein_g=protein.min_item_protein_g,
-            max_item_calories=protein.max_item_calories,
+            goals,
+            excluded_allergens=set(picks.exclude_allergens),
+            unknown_policy=picks.unknown_allergens,
+            min_item_protein_g=picks.min_item_protein_g,
+            max_item_calories=picks.max_item_calories,
+            max_servings_per_item=picks.max_servings_per_item,
+            max_total_servings=picks.max_total_servings,
         )
         if not plan.items:
             continue
-        lines.append(_plan_headline(hall_name, plan, protein.target_g))
-        lines.extend(_render_pick(p) for p in plan.items)
+        lines.extend(_plan_headline(hall_name, plan))
+        for planned in plan.items:
+            lines.extend(_render_pick(planned))
 
     if not lines:
         return []
-    return [f"PROTEIN PICKS ({protein.target_g:g}g target)", *lines]
+    summary = ", ".join(describe_goal(n, g) for n, g in goals.items())
+    return [f"PICKS: {summary}", *lines]

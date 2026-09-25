@@ -12,9 +12,18 @@ def make_item(
     calories: float | None = None,
     allergens: list[str] | None = None,
     has_nutrition: bool = True,
+    **nutrients: float | None,
 ) -> MenuItem:
-    """Build a MenuItem for tests without needing a full JSON fixture."""
-    nutrition = NutritionInfo(calories=calories, protein_g=protein_g) if has_nutrition else None
+    """Build a MenuItem for tests without needing a full JSON fixture.
+
+    Extra keyword arguments are NutritionInfo fields (carbs_g, fat_g,
+    fiber_g, sugar_g, sodium_mg).
+    """
+    nutrition = (
+        NutritionInfo(calories=calories, protein_g=protein_g, **nutrients)
+        if has_nutrition
+        else None
+    )
     food = Food(
         name=name,
         nutrition=nutrition,

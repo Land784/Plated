@@ -1,22 +1,31 @@
-"""Protein-focused meal planner.
+"""Macro-goal meal planner.
 
-Greedy, explainable algorithm: rank allergen-safe items by protein per
-calorie, then take items in that order until the protein target is hit
-or the calorie cap would be exceeded. See "Meal planner behavior" in
-CLAUDE.md.
+Given one hall's items and a subscriber's goals (see menu/macros.py),
+find the combination of servings that meets every goal and supplies the
+most of what the goals ask for per calorie (for a lone protein goal,
+protein per calorie). Combos hold at most ``max_total_servings`` servings and at
+most ``max_servings_per_item`` of any one item, so "2x grilled chicken"
+is a valid pick. If no combo meets every goal, the one that misses by
+the least is returned and labelled as such.
 
-Two eligibility rules keep the ranking honest against real Nutrislice
-data. Neither changes a reported value; they only decide what gets
-ranked:
+This is an exhaustive search over a small space rather than a greedy
+pass: greedy stopped at the first item that crossed the target, which
+could overshoot by a whole entree. The result is still one sentence to
+explain: "of the combos that meet your goals, the most protein (or
+whatever you asked for) per calorie".
 
-- A per-item protein floor. Ranking purely by protein per calorie made
-  a single lettuce leaf the top pick for a 40g target, because a tiny
-  item can have an excellent ratio while contributing almost nothing.
+Eligibility rules keep the search honest against real Nutrislice data.
+None of them changes a reported value; they only decide what is ranked:
+
+- Items missing any nutrient the goals depend on are never ranked or
+  estimated (CLAUDE.md: never invent, estimate, or fill in).
 - A per-item calorie ceiling. Some rows are bulk recipe quantities
   rather than servings (a 2473 cal "Cheese Pizza" with serving "1
   pizza"), and the serving unit can't tell them apart from real
-  servings, so calories are the only usable signal. An item over the
-  ceiling is left unranked, not corrected.
+  servings, so calories are the only usable signal.
+- A per-item protein floor, applied only when protein has a goal.
+  Without it, protein-per-calorie ranking once made a single lettuce
+  leaf the top pick for a 40g target.
 
 Every plan draws from a single hall's menu. Callers must not pool halls,
 since nobody eats at North and South in the same meal.
@@ -24,113 +33,208 @@ since nobody eats at North and South in the same meal.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
+from itertools import combinations_with_replacement
 
 from menu.allergens import UnknownAllergenPolicy, filter_items, is_unknown
+from menu.macros import NUTRIENTS, Goal, describe_range, nutrient_value
 from menu.models import MenuItem
 
 DEFAULT_MIN_ITEM_PROTEIN_G = 15.0
 DEFAULT_MAX_ITEM_CALORIES = 1200.0
+DEFAULT_MAX_SERVINGS_PER_ITEM = 2
+DEFAULT_MAX_TOTAL_SERVINGS = 4
+# Hard ceiling on max_total_servings: the search grows combinatorially.
+MAX_TOTAL_SERVINGS_LIMIT = 5
+# When more items are eligible than this, only the most useful for the
+# goals are searched, which keeps a run to a few thousand combos.
+CANDIDATE_POOL = 24
+
+# Always shown per item and in totals, whatever the goals are.
+DISPLAY_NUTRIENTS = ("protein", "carbs", "fat", "calories")
 
 
 @dataclass
 class PlannedItem:
     item: MenuItem
-    protein_g: float
-    calories: float
-    protein_per_calorie: float
-    reason: str
+    servings: int
+    # One serving's values as reported; None where Nutrislice left it out.
+    per_serving: dict[str, float | None]
 
 
 @dataclass
 class MealPlan:
     items: list[PlannedItem] = field(default_factory=list)
-    total_protein_g: float = 0.0
-    total_calories: float = 0.0
-    target_met: bool = False
+    # Sum over servings; None if any chosen item lacks that nutrient.
+    totals: dict[str, float | None] = field(default_factory=dict)
+    goals_met: bool = False
+    # One entry per goal the plan misses, e.g. "protein 57g (want 60-80g)".
+    misses: list[str] = field(default_factory=list)
     flagged_unknown_allergens: list[MenuItem] = field(default_factory=list)
 
 
-def _rankable(
+def _eligible(
     items: list[MenuItem],
+    goals: dict[str, Goal],
     *,
     min_item_protein_g: float,
     max_item_calories: float | None,
-) -> list[tuple[MenuItem, float, float]]:
-    """Items eligible for ranking, as (item, protein_g, calories).
-
-    Items missing either value are never ranked or estimated -- see
-    CLAUDE.md's "never invent, estimate, or fill in" rule. Rows repeated
-    under the same name keep only their first occurrence.
-    """
-    ranked = []
+) -> list[MenuItem]:
+    required = set(goals) | {"calories"}
+    protein_floor = "protein" in goals and goals["protein"].drives_picks
+    eligible: list[MenuItem] = []
     seen: set[str] = set()
     for item in items:
-        if item.food is None or item.food.nutrition is None:
+        if item.food is None:
             continue
-        protein = item.food.nutrition.protein_g
-        calories = item.food.nutrition.calories
-        if protein is None or protein <= 0 or calories is None or calories <= 0:
+        values = {n: nutrient_value(item, n) for n in required}
+        if any(v is None for v in values.values()):
             continue
-        if protein < min_item_protein_g:
+        calories = values["calories"]
+        if calories <= 0:
             continue
         if max_item_calories is not None and calories > max_item_calories:
+            continue
+        if protein_floor and values["protein"] < min_item_protein_g:
             continue
         name = item.food.name.strip()
         if name in seen:
             continue
         seen.add(name)
-        ranked.append((item, protein, calories))
-    return ranked
+        eligible.append(item)
+    return eligible
 
 
-def build_meal_plan(
+def _usefulness(item: MenuItem, goals: dict[str, Goal]) -> float:
+    """How much of the asked-for amounts one serving supplies, per calorie."""
+    supplied = 0.0
+    for nutrient, goal in goals.items():
+        if not goal.drives_picks:
+            continue
+        wanted = goal.target if goal.target is not None else goal.min
+        if wanted:
+            supplied += nutrient_value(item, nutrient) / wanted
+    return supplied / nutrient_value(item, "calories")
+
+
+def _violation(totals: dict[str, float], bounds: dict[str, tuple[float, float]]) -> float:
+    """Total relative distance outside every goal's range; 0 means all met."""
+    miss = 0.0
+    for nutrient, (low, high) in bounds.items():
+        value = totals[nutrient]
+        if value < low:
+            miss += (low - value) / max(low, 1.0)
+        elif value > high:
+            miss += (value - high) / max(high, 1.0)
+    return miss
+
+
+def _efficiency(totals: dict[str, float], goals: dict[str, Goal]) -> float:
+    """Share of each asked-for amount supplied, summed, per calorie.
+
+    For a lone protein target this is protein per calorie. Calories are
+    the denominator, never part of the sum.
+    """
+    supplied = 0.0
+    for nutrient, goal in goals.items():
+        if nutrient == "calories" or not goal.drives_picks:
+            continue
+        wanted = goal.target if goal.target is not None else goal.min
+        if wanted:
+            supplied += totals[nutrient] / wanted
+    return supplied / totals["calories"]
+
+
+def _target_distance(totals: dict[str, float], goals: dict[str, Goal]) -> float:
+    return sum(
+        abs(totals[n] - g.target) / g.target for n, g in goals.items() if g.target is not None
+    )
+
+
+def plan_meal(
     items: list[MenuItem],
+    goals: dict[str, Goal],
     *,
-    excluded_allergens: set[str],
-    protein_target_g: float,
-    calorie_cap: float | None = None,
+    excluded_allergens: set[str] | None = None,
     unknown_policy: UnknownAllergenPolicy = UnknownAllergenPolicy.FLAG,
     min_item_protein_g: float = DEFAULT_MIN_ITEM_PROTEIN_G,
     max_item_calories: float | None = DEFAULT_MAX_ITEM_CALORIES,
+    max_servings_per_item: int = DEFAULT_MAX_SERVINGS_PER_ITEM,
+    max_total_servings: int = DEFAULT_MAX_TOTAL_SERVINGS,
 ) -> MealPlan:
-    """Greedily build a small set of items meeting the protein target."""
-    safe_items, _dropped = filter_items(items, excluded_allergens, unknown_policy=unknown_policy)
-    flagged = [i for i in safe_items if is_unknown(i, excluded_allergens)]
+    """Best combo from one hall's items for ``goals``; see module docstring."""
+    excluded = excluded_allergens or set()
+    safe_items, _dropped = filter_items(items, excluded, unknown_policy=unknown_policy)
+    plan = MealPlan(flagged_unknown_allergens=[i for i in safe_items if is_unknown(i, excluded)])
 
-    candidates = _rankable(
+    if not any(g.drives_picks for g in goals.values()):
+        return plan
+
+    candidates = _eligible(
         safe_items,
+        goals,
         min_item_protein_g=min_item_protein_g,
         max_item_calories=max_item_calories,
     )
-    candidates.sort(key=lambda t: t[1] / t[2], reverse=True)
+    if not candidates:
+        return plan
+    if len(candidates) > CANDIDATE_POOL:
+        candidates = sorted(candidates, key=lambda i: _usefulness(i, goals), reverse=True)
+        candidates = candidates[:CANDIDATE_POOL]
 
-    plan = MealPlan(flagged_unknown_allergens=flagged)
+    scored = set(goals) | {"calories"}
+    values = [{n: nutrient_value(item, n) for n in scored} for item in candidates]
+    bounds = {n: g.bounds() for n, g in goals.items()}
 
-    for item, protein, calories in candidates:
-        if plan.target_met:
-            break
-        if calorie_cap is not None and plan.total_calories + calories > calorie_cap:
-            continue
+    best_key: tuple | None = None
+    best_combo: tuple[int, ...] = ()
+    total_cap = max(1, min(max_total_servings, MAX_TOTAL_SERVINGS_LIMIT))
+    for size in range(1, total_cap + 1):
+        for combo in combinations_with_replacement(range(len(candidates)), size):
+            if max(Counter(combo).values()) > max_servings_per_item:
+                continue
+            totals = {n: sum(values[i][n] for i in combo) for n in scored}
+            miss = _violation(totals, bounds)
+            # Meeting every goal beats any miss; then the most of what was
+            # asked for per calorie; then closest to targets; then fewest
+            # servings. Fewest calories alone was tried first and always
+            # landed at the bottom of a target's range: 62g protein for
+            # 507 cal over 78g for 513.
+            key = (
+                miss > 0,
+                miss,
+                -_efficiency(totals, goals),
+                _target_distance(totals, goals),
+                size,
+            )
+            if best_key is None or key < best_key:
+                best_key, best_combo = key, combo
 
-        ppc = protein / calories
-        name = item.food.name if item.food else "unknown item"
-        reason = (
-            f"{name}: {protein:g}g protein / {calories:g} cal ({ppc:.3f} g protein per calorie)"
-        )
+    counts = Counter(best_combo)
+    for index in sorted(counts, key=lambda i: best_combo.index(i)):
+        item = candidates[index]
         plan.items.append(
             PlannedItem(
                 item=item,
-                protein_g=protein,
-                calories=calories,
-                protein_per_calorie=ppc,
-                reason=reason,
+                servings=counts[index],
+                per_serving={n: nutrient_value(item, n) for n in (*DISPLAY_NUTRIENTS, *goals)},
             )
         )
-        plan.total_protein_g += protein
-        plan.total_calories += calories
 
-        if plan.total_protein_g >= protein_target_g:
-            plan.target_met = True
+    for nutrient in {*DISPLAY_NUTRIENTS, *goals}:
+        per_item = [(p.per_serving[nutrient], p.servings) for p in plan.items]
+        plan.totals[nutrient] = (
+            None if any(v is None for v, _ in per_item) else sum(v * s for v, s in per_item)
+        )
 
+    plan.goals_met = not best_key[0]
+    for nutrient, goal in goals.items():
+        low, high = bounds[nutrient]
+        total = plan.totals[nutrient]
+        if not low <= total <= high:
+            unit = NUTRIENTS[nutrient].unit
+            plan.misses.append(
+                f"{nutrient} {total:g}{unit} (want {describe_range(nutrient, goal)})"
+            )
     return plan

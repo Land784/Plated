@@ -41,6 +41,8 @@ class NutritionInfo(BaseModel):
     fat_g: float | None = Field(default=None, alias="g_fat")
     carbs_g: float | None = Field(default=None, alias="g_carbs")
     sodium_mg: float | None = Field(default=None, alias="mg_sodium")
+    fiber_g: float | None = Field(default=None, alias="g_fiber")
+    sugar_g: float | None = Field(default=None, alias="g_sugar")
 
 
 class ServingSizeInfo(BaseModel):

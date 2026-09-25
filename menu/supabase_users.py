@@ -19,7 +19,8 @@ import os
 
 import httpx
 
-from menu.users import UserConfig, parse_user
+from menu.macros import Goal
+from menu.users import MacrosConfig, UserConfig, parse_user
 
 URL_ENV = "SUPABASE_URL"
 KEY_ENV = "SUPABASE_SECRET_KEY"
@@ -35,7 +36,8 @@ COLUMNS = (
     "stations",
     "max_items_per_station",
     "schedule",
-    "protein",
+    "macros",
+    "picks",
 )
 
 TIMEOUT = 15.0
@@ -103,9 +105,31 @@ def load_users_from_supabase(
     return [parse_user(row, source=f"supabase:{row.get('name', '?')}") for row in rows]
 
 
+def _goal_to_json(goal: Goal) -> dict:
+    return {
+        key: value
+        for key, value in (
+            ("target", goal.target),
+            ("min", goal.min),
+            ("max", goal.max),
+            ("tolerance", goal.tolerance),
+        )
+        if value is not None
+    }
+
+
+def _macros_to_json(macros: MacrosConfig | None) -> dict | None:
+    if macros is None:
+        return None
+    data: dict = {nutrient: _goal_to_json(goal) for nutrient, goal in macros.goals.items()}
+    for meal, goals in macros.meals.items():
+        data[meal] = {nutrient: _goal_to_json(goal) for nutrient, goal in goals.items()}
+    return data
+
+
 def user_to_row(user: UserConfig) -> dict:
     """Serialize a validated config into a ``subscribers`` row."""
-    protein = user.protein
+    picks = user.picks
     return {
         "name": user.name,
         "ntfy_topic": user.ntfy_topic,
@@ -117,15 +141,14 @@ def user_to_row(user: UserConfig) -> dict:
             day: {meal: f"{at:%H:%M}" for meal, at in meals.items()}
             for day, meals in user.schedule.items()
         },
-        "protein": None
-        if protein is None
-        else {
-            "target_g": protein.target_g,
-            "min_item_protein_g": protein.min_item_protein_g,
-            "max_item_calories": protein.max_item_calories,
-            "calorie_cap": protein.calorie_cap,
-            "exclude_allergens": protein.exclude_allergens,
-            "unknown_allergens": protein.unknown_allergens.value,
+        "macros": _macros_to_json(user.macros),
+        "picks": {
+            "min_item_protein_g": picks.min_item_protein_g,
+            "max_item_calories": picks.max_item_calories,
+            "max_servings_per_item": picks.max_servings_per_item,
+            "max_total_servings": picks.max_total_servings,
+            "exclude_allergens": picks.exclude_allergens,
+            "unknown_allergens": picks.unknown_allergens.value,
         },
     }
 

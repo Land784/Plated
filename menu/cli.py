@@ -12,12 +12,12 @@ from zoneinfo import ZoneInfo
 from menu import client, supabase_users
 from menu.allergens import UnknownAllergenPolicy
 from menu.config import PlatedConfig, load_config
-from menu.digest import build_hall_section, build_protein_section
+from menu.digest import build_hall_section, build_picks_section
+from menu.macros import Goal, describe_goal
 from menu.models import DayMenu, MenuItem
 from menu.notifier import ConsoleNotifier, NtfyNotifier
-from menu.planner import MealPlan, build_meal_plan
 from menu.schedule import due_meals
-from menu.users import DEFAULT_TIMEZONE, UserConfig, load_users
+from menu.users import DEFAULT_TIMEZONE, MacrosConfig, PicksConfig, UserConfig, load_users
 
 
 def _meal_period_and_type(config: PlatedConfig, requested: str | None) -> tuple[str, str]:
@@ -64,44 +64,30 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     return 0
 
 
-def _build_today_plans(config: PlatedConfig, meal: str | None) -> tuple[str, dict[str, MealPlan]]:
-    """One plan per hall. Halls are never pooled: a meal is eaten at one."""
+def _build_today_picks(config: PlatedConfig, meal: str | None) -> tuple[str, list[str]]:
+    """Picks for config.toml's single user, from every station of each hall.
+
+    config.toml predates subscriber files, so its protein target and
+    calorie cap are translated into [macros] goals here.
+    """
     meal_period, menu_type = _meal_period_and_type(config, meal)
-    d = date.today()
-    days = _fetch_all_halls(config, menu_type, d)
+    days = _fetch_all_halls(config, menu_type, date.today())
 
-    plans = {
-        hall_name: build_meal_plan(
-            _visible_items(day),
-            excluded_allergens=set(config.excluded_allergens),
-            protein_target_g=config.protein_target_g,
-            calorie_cap=config.calorie_cap,
-            unknown_policy=UnknownAllergenPolicy(config.unknown_allergen_policy),
-        )
-        for hall_name, day in days.items()
-    }
-    return meal_period, plans
-
-
-def _format_plan(hall_name: str, plan: MealPlan) -> str:
-    lines = [f"{hall_name}:"]
-    if not plan.items:
-        lines.append("  No items met the criteria.")
-    for planned in plan.items:
-        lines.append(f"  - {planned.reason}")
-    lines.append(
-        f"Total: {plan.total_protein_g:g}g protein / {plan.total_calories:g} cal "
-        f"(target met: {plan.target_met})"
+    goals = {"protein": Goal(target=config.protein_target_g)}
+    if config.calorie_cap is not None:
+        goals["calories"] = Goal(max=config.calorie_cap)
+    picks = PicksConfig(
+        exclude_allergens=list(config.excluded_allergens),
+        unknown_allergens=UnknownAllergenPolicy(config.unknown_allergen_policy),
     )
-    if plan.flagged_unknown_allergens:
-        names = ", ".join(i.food.name for i in plan.flagged_unknown_allergens if i.food)
-        lines.append(f"Unknown allergen data (confirm with staff): {names}")
-    return "\n".join(lines)
+    lines = build_picks_section(
+        list(days.items()), None, MacrosConfig(goals=goals), picks, meal_period
+    )
+    return meal_period, lines or ["No items met the goals."]
 
 
-def _format_plans(meal_period: str, plans: dict[str, MealPlan]) -> str:
-    body = "\n\n".join(_format_plan(hall, plan) for hall, plan in plans.items())
-    return f"Meal plan ({meal_period}):\n{body}"
+def _format_plans(meal_period: str, lines: list[str]) -> str:
+    return f"Meal plan ({meal_period}):\n" + "\n".join(lines)
 
 
 def cmd_plan(args: argparse.Namespace) -> int:
@@ -109,8 +95,8 @@ def cmd_plan(args: argparse.Namespace) -> int:
     if not config.dining_halls:
         print("No dining halls configured -- see config.example.toml", file=sys.stderr)
         return 1
-    meal_period, plans = _build_today_plans(config, args.meal)
-    print(_format_plans(meal_period, plans))
+    meal_period, lines = _build_today_picks(config, args.meal)
+    print(_format_plans(meal_period, lines))
     return 0
 
 
@@ -119,8 +105,8 @@ def cmd_notify(args: argparse.Namespace) -> int:
     if not config.dining_halls:
         print("No dining halls configured -- see config.example.toml", file=sys.stderr)
         return 1
-    meal_period, plans = _build_today_plans(config, args.meal)
-    message = _format_plans(meal_period, plans)
+    meal_period, lines = _build_today_picks(config, args.meal)
+    message = _format_plans(meal_period, lines)
 
     notifier = NtfyNotifier(topic=config.ntfy_topic) if config.ntfy_topic else ConsoleNotifier()
     notifier.send(title=f"Dining hall plan: {meal_period}", message=message)
@@ -155,7 +141,7 @@ def _load_subscribers(args: argparse.Namespace) -> list[UserConfig]:
 
 
 def _build_message(user: UserConfig, meal: str, local_date: date) -> list[str]:
-    """Protein picks (if configured) followed by each hall's stations.
+    """Meal picks (if configured) followed by each hall's stations.
 
     Returns [] when no hall has station content. Picks alone never make a
     message: they come from the same stations, so an empty station list
@@ -172,8 +158,8 @@ def _build_message(user: UserConfig, meal: str, local_date: date) -> list[str]:
         return []
 
     blocks = station_blocks
-    if user.protein is not None:
-        picks = build_protein_section(halls, user.stations, user.protein)
+    if user.macros is not None:
+        picks = build_picks_section(halls, user.stations, user.macros, user.picks, meal)
         if picks:
             blocks = [picks, *station_blocks]
 
@@ -246,10 +232,14 @@ def cmd_subscribers_list(args: argparse.Namespace) -> int:
     users = supabase_users.load_users_from_supabase(url, key)
     for user in users:
         meals = sum(len(m) for m in user.schedule.values())
-        protein = f"{user.protein.target_g:g}g protein" if user.protein else "no protein picks"
-        print(
-            f"{user.name}: {len(user.stations)} stations, {meals} scheduled meals/week, {protein}"
+        goals = (
+            ", ".join(describe_goal(n, g) for n, g in user.macros.goals.items())
+            if user.macros
+            else "no picks"
         )
+        if user.macros and user.macros.meals:
+            goals += f" (+ overrides for {', '.join(user.macros.meals)})"
+        print(f"{user.name}: {len(user.stations)} stations, {meals} scheduled meals/week, {goals}")
     print(f"{len(users)} active subscriber(s)", file=sys.stderr)
     return 0
 
