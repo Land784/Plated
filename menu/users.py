@@ -45,6 +45,10 @@ WEEKDAYS = (
 
 DEFAULT_TIMEZONE = "America/New_York"
 DEFAULT_MAX_ITEMS = 4
+# A notification lists an item as a station's main at this much protein
+# per listed serving (see menu/digest.py). Display only; picks have
+# their own floor in [picks].
+DEFAULT_MAIN_PROTEIN_G = 10.0
 DEFAULT_HALLS = ("north-dining-hall", "south-dining-hall")
 
 
@@ -98,6 +102,7 @@ class UserConfig:
     halls: list[str] = field(default_factory=lambda: list(DEFAULT_HALLS))
     stations: list[str] = field(default_factory=list)
     max_items_per_station: int = DEFAULT_MAX_ITEMS
+    main_protein_g: float = DEFAULT_MAIN_PROTEIN_G
     # weekday -> meal slug -> local send time
     schedule: dict[str, dict[str, time]] = field(default_factory=dict)
     # None means no meal picks, just the station digest.
@@ -334,6 +339,12 @@ def parse_user(data: dict, source: str) -> UserConfig:
         halls=list(halls),
         stations=list(stations),
         max_items_per_station=int(data.get("max_items_per_station", DEFAULT_MAX_ITEMS)),
+        # A row from before the column existed has no key, so it gets the default.
+        main_protein_g=_parse_number(
+            data.get("main_protein_g", DEFAULT_MAIN_PROTEIN_G),
+            f"{source} main_protein_g",
+            allow_zero=True,
+        ),
         schedule=_parse_schedule(data.get("schedule"), source),
         macros=_parse_macros(data.get("macros"), source),
         picks=_parse_picks(data.get("picks"), source),

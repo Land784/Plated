@@ -27,6 +27,7 @@ ROW = {
     "halls": ["north-dining-hall"],
     "stations": ["Domer Diner"],
     "max_items_per_station": 4,
+    "main_protein_g": 12,
     "schedule": {"monday": {"lunch": "11:15"}},
     "macros": {"protein": {"target": 70}, "brunch": {"protein": {"target": 50}}},
     "picks": {"max_servings_per_item": 3},
@@ -139,6 +140,11 @@ def test_row_round_trips_through_parse_user():
         "test",
     )
     assert parse_user(user_to_row(user), "test") == user
+
+
+def test_row_from_before_the_main_protein_column_gets_the_default():
+    row = {key: value for key, value in ROW.items() if key != "main_protein_g"}
+    assert parse_user(row, "test").main_protein_g == 10
 
 
 def test_missing_credentials_name_every_missing_variable(monkeypatch):

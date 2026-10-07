@@ -36,6 +36,7 @@ COLUMNS = (
     "halls",
     "stations",
     "max_items_per_station",
+    "main_protein_g",
     "schedule",
     "macros",
     "picks",
@@ -148,6 +149,7 @@ def user_to_row(user: UserConfig) -> dict:
         "halls": user.halls,
         "stations": user.stations,
         "max_items_per_station": user.max_items_per_station,
+        "main_protein_g": user.main_protein_g,
         "schedule": {
             day: {meal: f"{at:%H:%M}" for meal, at in meals.items()}
             for day, meals in user.schedule.items()

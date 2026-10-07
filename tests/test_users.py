@@ -7,6 +7,7 @@ from menu.allergens import UnknownAllergenPolicy
 from menu.macros import Goal
 from menu.users import (
     DEFAULT_HALLS,
+    DEFAULT_MAIN_PROTEIN_G,
     DEFAULT_MAX_ITEMS,
     PicksConfig,
     UserConfigError,
@@ -24,7 +25,19 @@ def test_minimal_user_gets_sensible_defaults():
     assert user.name == "Wes"
     assert user.halls == list(DEFAULT_HALLS)
     assert user.max_items_per_station == DEFAULT_MAX_ITEMS
+    assert user.main_protein_g == DEFAULT_MAIN_PROTEIN_G == 10
     assert user.schedule == {}
+
+
+def test_main_protein_floor_can_be_set_or_zeroed():
+    assert parse_user({**MINIMAL, "main_protein_g": 15}, "test.toml").main_protein_g == 15
+    assert parse_user({**MINIMAL, "main_protein_g": 0}, "test.toml").main_protein_g == 0
+
+
+@pytest.mark.parametrize("value", [-1, "10", True, None])
+def test_malformed_main_protein_floor_is_rejected(value):
+    with pytest.raises(UserConfigError, match="main_protein_g"):
+        parse_user({**MINIMAL, "main_protein_g": value}, "test.toml")
 
 
 def test_schedule_times_are_parsed():
