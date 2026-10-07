@@ -64,7 +64,7 @@ def credentials_from_env() -> tuple[str, str]:
     return url, key
 
 
-def _headers(key: str) -> dict[str, str]:
+def api_headers(key: str) -> dict[str, str]:
     headers = {"apikey": key}
     # Legacy service_role keys are JWTs and also go in Authorization.
     # The newer sb_secret_ keys are not JWTs; the gateway rejects them
@@ -74,7 +74,7 @@ def _headers(key: str) -> dict[str, str]:
     return headers
 
 
-def _raise_for_status(response: httpx.Response, action: str) -> None:
+def raise_for_status(response: httpx.Response, action: str) -> None:
     if response.is_success:
         return
     # PostgREST error bodies describe the query, never the key, so they
@@ -93,12 +93,12 @@ def fetch_subscriber_rows(url: str, key: str, *, client: httpx.Client | None = N
                 "active": "is.true",
                 "order": "created_at",
             },
-            headers=_headers(key),
+            headers=api_headers(key),
         )
     finally:
         if client is None:
             http.close()
-    _raise_for_status(response, "loading subscribers")
+    raise_for_status(response, "loading subscribers")
     rows = response.json()
     if not isinstance(rows, list):
         raise SupabaseError(f"loading subscribers: expected a list, got {type(rows).__name__}")
@@ -185,14 +185,14 @@ def upsert_subscriber(
             params={"on_conflict": "ntfy_topic"},
             json=row,
             headers={
-                **_headers(key),
+                **api_headers(key),
                 "Prefer": "resolution=merge-duplicates,return=minimal",
             },
         )
     finally:
         if client is None:
             http.close()
-    _raise_for_status(response, f"saving {source}")
+    raise_for_status(response, f"saving {source}")
     return user
 
 
@@ -220,14 +220,14 @@ def claim_send(
             f"{url}/rest/v1/{SENT_TABLE}",
             json=_sent_key(subscriber_id, meal, local_date),
             headers={
-                **_headers(key),
+                **api_headers(key),
                 "Prefer": "resolution=ignore-duplicates,return=representation",
             },
         )
     finally:
         if client is None:
             http.close()
-    _raise_for_status(response, f"claiming {meal} on {local_date}")
+    raise_for_status(response, f"claiming {meal} on {local_date}")
     return bool(response.json())
 
 
@@ -244,8 +244,10 @@ def release_send(
     params = {k: f"eq.{v}" for k, v in _sent_key(subscriber_id, meal, local_date).items()}
     http = client or httpx.Client(timeout=TIMEOUT)
     try:
-        response = http.delete(f"{url}/rest/v1/{SENT_TABLE}", params=params, headers=_headers(key))
+        response = http.delete(
+            f"{url}/rest/v1/{SENT_TABLE}", params=params, headers=api_headers(key)
+        )
     finally:
         if client is None:
             http.close()
-    _raise_for_status(response, f"releasing {meal} on {local_date}")
+    raise_for_status(response, f"releasing {meal} on {local_date}")

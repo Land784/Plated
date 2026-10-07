@@ -100,6 +100,40 @@ DEFAULT_MEAL_TAG = "fork_and_knife"
 
 HALL_PAGE_URL = "https://nd.nutrislice.com/menu/{slug}/"
 
+# Stations that serve drinks, add-ons or self-serve basics rather than a
+# meal. The web app's station picker starts with every *other* station
+# switched on, so this decides what a new subscriber gets by default.
+# Display only, like the mains rule: it never hides a station someone
+# chose. Matched on the normalized name with "&" read as "and" and "-" as
+# a space, so "Coffee & Tea" and "Gluten-Free" match. Reviewable: a name
+# seen in the menus table that belongs here can simply be added.
+NON_FOOD_STATIONS = frozenset(
+    {
+        "beverages",
+        "coffee and tea",
+        "fountain drinks",
+        "juice",
+        "milk",
+        "cereal",
+        "toppings",
+        "condiments",
+        "salad bar",
+        "other food items",
+        "toasting station",
+        "waffle and pancake toppings",
+        "oatmeal",
+        "oatmeal toppings",
+        "gluten free",
+        "yogurt",
+        "fresh fruit",
+        "whole fruit",
+        "pastries",
+        "dessert",
+        "desserts",
+    }
+)
+_AMPERSAND = re.compile(r"\s*&\s*")
+
 
 @dataclass
 class Station:
@@ -154,6 +188,12 @@ def normalize_station(name: str) -> str:
     """Normalize a station name for matching against an allowlist."""
     collapsed = _WHITESPACE.sub(" ", name).strip().lower()
     return _LEADING_ARTICLE.sub("", collapsed)
+
+
+def is_food_station(name: str) -> bool:
+    """False for a station in NON_FOOD_STATIONS (drinks, toppings, the salad bar)."""
+    key = _AMPERSAND.sub(" and ", normalize_station(name).replace("-", " "))
+    return normalize_station(key) not in NON_FOOD_STATIONS
 
 
 def group_by_station(day: DayMenu) -> list[Station]:
