@@ -1,8 +1,7 @@
 import importlib.util
+import io
 import json
-import threading
 from datetime import date
-from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 import httpx
@@ -243,6 +242,36 @@ def _load_vercel_handler():
     return module
 
 
+class _FakeSocket:
+    """Just enough of a socket for BaseHTTPRequestHandler, so no port is opened."""
+
+    def __init__(self, raw: bytes):
+        self.raw = raw
+        self.sent = b""
+
+    def makefile(self, mode, buffering=None):
+        return io.BytesIO(self.raw)
+
+    def sendall(self, data):
+        self.sent += bytes(data)
+
+
+def _call_handler(module, method: str, body: bytes = b"", headers: dict | None = None):
+    head = [
+        f"{method} /api/preview HTTP/1.1",
+        "Host: plated.example",
+        *(f"{k}: {v}" for k, v in {"Content-Length": str(len(body)), **(headers or {})}.items()),
+    ]
+    sock = _FakeSocket("\r\n".join(head).encode() + b"\r\n\r\n" + body)
+    module.handler(sock, ("127.0.0.1", 5000), None)
+    status_line, _, rest = sock.sent.partition(b"\r\n")
+    raw_headers, _, payload = rest.partition(b"\r\n\r\n")
+    reply_headers = dict(
+        line.decode().split(": ", 1) for line in raw_headers.split(b"\r\n") if line
+    )
+    return int(status_line.split()[1]), {k.lower(): v for k, v in reply_headers.items()}, payload
+
+
 def test_vercel_handler_adapts_http_to_handle_request(monkeypatch):
     module = _load_vercel_handler()
     seen = {}
@@ -252,27 +281,24 @@ def test_vercel_handler_adapts_http_to_handle_request(monkeypatch):
         return 200, {"sent": False, "reason": "no menu published"}
 
     monkeypatch.setattr(module, "handle_request", fake_handle)
-    server = ThreadingHTTPServer(("127.0.0.1", 0), module.handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        base = f"http://127.0.0.1:{server.server_address[1]}/api/preview"
-        # Loopback only; trust_env=False so no proxy setting can reroute it.
-        with httpx.Client(trust_env=False) as local:
-            response = local.post(base, json={"a": 1}, headers={"x-forwarded-for": "7.7.7.7"})
-            wrong_method = local.get(base)
-    finally:
-        server.shutdown()
-        server.server_close()
 
-    assert response.status_code == 200
-    assert response.headers["content-type"] == "application/json; charset=utf-8"
-    assert response.headers["cache-control"] == "no-store"
-    assert response.json() == {"sent": False, "reason": "no menu published"}
+    status, headers, payload = _call_handler(
+        module, "POST", json.dumps({"a": 1}).encode(), {"X-Forwarded-For": "7.7.7.7"}
+    )
+
+    assert status == 200
+    assert headers["content-type"] == "application/json; charset=utf-8"
+    assert headers["cache-control"] == "no-store"
+    assert json.loads(payload) == {"sent": False, "reason": "no menu published"}
     assert json.loads(seen["body"]) == {"a": 1}
     assert seen["ip"] == "7.7.7.7"
     assert seen["limiter"] is module.LIMITER
-    assert wrong_method.status_code == 405
+
+
+def test_vercel_handler_rejects_other_methods():
+    status, headers, _ = _call_handler(_load_vercel_handler(), "GET")
+    assert status == 405
+    assert headers["allow"] == "POST"
 
 
 def test_preview_date_defaults_nothing():

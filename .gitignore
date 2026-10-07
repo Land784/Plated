@@ -27,3 +27,6 @@ handoffs/
 
 # Local secrets (Supabase URL and secret key). Never commit.
 .env
+
+# Agent worktrees: full checkouts of this repo, never part of it.
+.claude/worktrees/

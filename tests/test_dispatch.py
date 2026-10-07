@@ -92,6 +92,7 @@ class _Recorder:
         menu=MENU,
         menus_stored=True,
         store_problems=(),
+        bad_rows=(),
     ):
         self.claims: list[tuple] = []
         self.releases: list[tuple] = []
@@ -101,7 +102,9 @@ class _Recorder:
             {**USER, "id": "3f1c", "schedule": {"friday": {"lunch": "11:15"}}}, "test"
         )
         monkeypatch.setattr(cli.supabase_users, "credentials_from_env", lambda: ("url", "key"))
-        monkeypatch.setattr(cli.supabase_users, "load_users_from_supabase", lambda u, k: [user])
+        monkeypatch.setattr(
+            cli.supabase_users, "load_users_from_supabase", lambda u, k: ([user], list(bad_rows))
+        )
 
         def claim(url, key, *key_parts):
             self.claims.append(key_parts)
@@ -120,18 +123,18 @@ class _Recorder:
 
         monkeypatch.setattr(cli.NtfyNotifier, "send", send)
 
-        def has_menus_for(url, key, d):
+        def has_store_run(url, key, d):
             if isinstance(menus_stored, Exception):
                 raise menus_stored
             return menus_stored
 
-        def store_day(url, key, d, *, now):
+        def store_week(url, key, d, *, now):
             # Sends come first, so a slow Nutrislice can't delay them.
             self.stored.append((d, len(self.sent)))
             return list(store_problems)
 
-        monkeypatch.setattr(cli.menus_store, "has_menus_for", has_menus_for)
-        monkeypatch.setattr(cli.menus_store, "store_day", store_day)
+        monkeypatch.setattr(cli.menus_store, "has_store_run", has_store_run)
+        monkeypatch.setattr(cli.menus_store, "store_week", store_week)
 
     def run(self, now="2026-09-25T11:40") -> int:
         return cli.main(["dispatch", "--supabase", "--now", now])
@@ -180,6 +183,16 @@ def test_a_meal_past_the_window_is_not_sent(monkeypatch):
     assert rec.claims == []
 
 
+def test_a_bad_row_is_skipped_reported_and_fails_the_run(monkeypatch, capsys):
+    rec = _Recorder(monkeypatch, bad_rows=["mallory: 'halls' must be a non-empty list"])
+    assert rec.run() == 1
+    assert len(rec.sent) == 1
+    assert (
+        "dispatch: skipped subscriber mallory: 'halls' must be a non-empty list"
+        in capsys.readouterr().err
+    )
+
+
 def test_the_first_run_after_5am_stores_todays_menus_after_sending(monkeypatch):
     rec = _Recorder(monkeypatch, menus_stored=False)
     assert rec.run() == 0
@@ -225,11 +238,11 @@ def _store_command(monkeypatch, problems=()):
     calls = []
     monkeypatch.setattr(cli.supabase_users, "credentials_from_env", lambda: ("url", "key"))
 
-    def store_day(url, key, d, *, now):
+    def store_week(url, key, d, *, now):
         calls.append(d)
         return list(problems)
 
-    monkeypatch.setattr(cli.menus_store, "store_day", store_day)
+    monkeypatch.setattr(cli.menus_store, "store_week", store_week)
     return calls
 
 

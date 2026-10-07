@@ -44,7 +44,7 @@ WEEKDAYS = (
 )
 
 DEFAULT_TIMEZONE = "America/New_York"
-DEFAULT_MAX_ITEMS = 4
+DEFAULT_MAX_ITEMS = 3
 # A notification lists an item as a station's main at this much protein
 # per listed serving (see menu/digest.py). Display only; picks have
 # their own floor in [picks].

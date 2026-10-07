@@ -1,9 +1,9 @@
 """Save each day's menus to Supabase for the web app.
 
 The notify job is the only thing that talks to Nutrislice. Once a day it
-copies today's menus into ``public.menus`` (supabase/migrations/), one
-row per (date, hall, meal), so the web app's preview and station picker
-read Supabase and never Nutrislice.
+copies the current week's menus into ``public.menus``
+(supabase/migrations/), one row per (date, hall, meal), so the web
+app's preview and station picker read Supabase and never Nutrislice.
 
 A row's ``items`` is the day's ``menu_items`` trimmed to the fields the
 models in menu/models.py read, in menu order, so
@@ -38,13 +38,15 @@ from menu.digest import (
     normalize_station,
     station_lineup,
 )
-from menu.models import DayMenu, MenuItem
+from menu.models import DayMenu, MenuItem, WeekMenu
 from menu.planner import DEFAULT_MAX_ITEM_CALORIES
 from menu.supabase_users import TIMEOUT, SupabaseError, api_headers, raise_for_status
 from menu.users import DEFAULT_HALLS, DEFAULT_MAIN_PROTEIN_G
 
 MENUS_TABLE = "menus"
 STATIONS_TABLE = "menu_stations"
+# One row per local date whose store finished with no problems.
+RUNS_TABLE = "menu_store_runs"
 
 # Every confirmed menu type that serves food ("special" has never been
 # seen with items). One week request per hall per type covers a week.
@@ -70,7 +72,7 @@ EXAMPLE_RULE = MainsRule(
 # The nutrition keys the models read, under Nutrislice's names.
 NUTRITION_KEYS = ("calories", "g_protein", "g_fat", "g_carbs", "mg_sodium", "g_fiber", "g_sugar")
 
-Fetch = Callable[[str, str, date], DayMenu | None]
+FetchWeek = Callable[[str, str, date], WeekMenu]
 
 
 # ---- trimming --------------------------------------------------------------
@@ -153,20 +155,30 @@ def _http(client: httpx.Client | None) -> httpx.Client:
     return client or httpx.Client(timeout=TIMEOUT)
 
 
-def has_menus_for(url: str, key: str, d: date, *, client: httpx.Client | None = None) -> bool:
-    """Whether any ``menus`` row exists for ``d``: the day's store already ran."""
+def has_store_run(url: str, key: str, d: date, *, client: httpx.Client | None = None) -> bool:
+    """Whether a store for local date ``d`` already finished without problems."""
     http = _http(client)
     try:
         response = http.get(
-            f"{url}/rest/v1/{MENUS_TABLE}",
-            params={"select": "date", "date": f"eq.{d.isoformat()}", "limit": "1"},
+            f"{url}/rest/v1/{RUNS_TABLE}",
+            params={"select": "local_date", "local_date": f"eq.{d.isoformat()}", "limit": "1"},
             headers=api_headers(key),
         )
     finally:
         if client is None:
             http.close()
-    raise_for_status(response, f"checking menus for {d}")
+    raise_for_status(response, f"checking the menus store for {d}")
     return bool(response.json())
+
+
+def record_store_run(url: str, key: str, d: date, now: datetime, http: httpx.Client) -> None:
+    response = http.post(
+        f"{url}/rest/v1/{RUNS_TABLE}",
+        params={"on_conflict": "local_date"},
+        json={"local_date": d.isoformat(), "stored_at": now.isoformat()},
+        headers={**api_headers(key), "Prefer": "resolution=merge-duplicates,return=minimal"},
+    )
+    raise_for_status(response, f"recording the menus store for {d}")
 
 
 def upsert_menus(url: str, key: str, rows: list[dict], http: httpx.Client) -> None:
@@ -176,24 +188,33 @@ def upsert_menus(url: str, key: str, rows: list[dict], http: httpx.Client) -> No
         json=rows,
         headers={**api_headers(key), "Prefer": "resolution=merge-duplicates,return=minimal"},
     )
-    raise_for_status(response, f"saving menus for {rows[0]['date']}")
+    raise_for_status(response, f"saving {rows[0]['hall']}/{rows[0]['meal']} menus")
 
 
 def replace_station_rows(
-    url: str, key: str, d: date, menus: list[tuple[str, str]], rows: list[dict], http: httpx.Client
+    url: str,
+    key: str,
+    hall: str,
+    meal: str,
+    dates: list[date],
+    rows: list[dict],
+    http: httpx.Client,
 ) -> None:
-    """Swap the station rows of exactly these (hall, meal) menus on ``d``.
+    """Swap the station rows of one hall and meal on exactly these dates.
 
     Deleting first means a station that dropped off a re-stored menu
     doesn't linger in the picker.
     """
-    pairs = ",".join(f"and(hall.eq.{hall},meal.eq.{meal})" for hall, meal in menus)
     response = http.delete(
         f"{url}/rest/v1/{STATIONS_TABLE}",
-        params={"date": f"eq.{d.isoformat()}", "or": f"({pairs})"},
+        params={
+            "hall": f"eq.{hall}",
+            "meal": f"eq.{meal}",
+            "date": f"in.({','.join(d.isoformat() for d in dates)})",
+        },
         headers=api_headers(key),
     )
-    raise_for_status(response, f"clearing stations for {d}")
+    raise_for_status(response, f"clearing {hall}/{meal} stations")
     if not rows:
         return
     response = http.post(
@@ -201,17 +222,18 @@ def replace_station_rows(
         json=rows,
         headers={**api_headers(key), "Prefer": "return=minimal"},
     )
-    raise_for_status(response, f"saving stations for {d}")
+    raise_for_status(response, f"saving {hall}/{meal} stations")
 
 
-def delete_menus_before(url: str, key: str, cutoff: date, http: httpx.Client) -> None:
+def delete_before(url: str, key: str, cutoff: date, http: httpx.Client) -> None:
     """Retention. Station rows go with their menu (on delete cascade)."""
-    response = http.delete(
-        f"{url}/rest/v1/{MENUS_TABLE}",
-        params={"date": f"lt.{cutoff.isoformat()}"},
-        headers=api_headers(key),
-    )
-    raise_for_status(response, f"deleting menus before {cutoff}")
+    for table, column in ((MENUS_TABLE, "date"), (RUNS_TABLE, "local_date")):
+        response = http.delete(
+            f"{url}/rest/v1/{table}",
+            params={column: f"lt.{cutoff.isoformat()}"},
+            headers=api_headers(key),
+        )
+        raise_for_status(response, f"deleting {table} before {cutoff}")
 
 
 # ---- the job ---------------------------------------------------------------
@@ -223,49 +245,53 @@ def store_due(now_utc: datetime) -> date | None:
     return local.date() if local.time() >= STORE_AFTER else None
 
 
-def store_day(
+def _store_menu(
+    url: str, key: str, hall: str, meal: str, week: WeekMenu, now: datetime, http: httpx.Client
+) -> None:
+    """Every day of one hall and meal's week that serves food."""
+    days = [day for day in week.days if has_food(day)]
+    if not days:
+        return
+    upsert_menus(url, key, [menu_row(day.date, hall, meal, day, now) for day in days], http)
+    stations = [row for day in days for row in station_rows(day.date, hall, meal, day)]
+    replace_station_rows(url, key, hall, meal, [day.date for day in days], stations, http)
+
+
+def store_week(
     url: str,
     key: str,
     d: date,
     *,
     now: datetime,
-    fetch: Fetch | None = None,
+    fetch: FetchWeek | None = None,
     client: httpx.Client | None = None,
 ) -> list[str]:
-    """Fetch every hall and meal for ``d``, save them, and prune old rows.
+    """Store every day of the week containing ``d``, for every hall and meal.
 
-    Returns problems instead of raising, so the caller can report them
-    without anything else failing. A menu that fails to fetch is skipped
-    and the rest are saved.
+    The week request is the one Nutrislice call per hall and meal, so
+    storing all of it costs nothing extra and lets the preview show the
+    rest of the week. Then prunes rows over RETENTION_DAYS old.
+
+    Returns problems instead of raising. A hall and meal that fails is
+    skipped and the rest are stored; only a store with no problems is
+    recorded in ``menu_store_runs`` (as local date ``d``), so a partial
+    one is retried by the next run.
     """
-    fetch = fetch or nutrislice.fetch_day
+    fetch = fetch or nutrislice.fetch_week
     problems: list[str] = []
-    menus: list[tuple[str, str]] = []
-    rows: list[dict] = []
-    stations: list[dict] = []
-    for hall in STORED_HALLS:
-        for meal in STORED_MEALS:
-            try:
-                day = fetch(hall, meal, d)
-            except Exception as exc:  # noqa: BLE001 - one menu must not stop the rest
-                problems.append(f"menus store: {hall}/{meal} on {d}: {exc}")
-                continue
-            if (row := menu_row(d, hall, meal, day, now)) is None:
-                continue
-            menus.append((hall, meal))
-            rows.append(row)
-            stations.extend(station_rows(d, hall, meal, day))
-
     http = _http(client)
     try:
-        if rows:
-            try:
-                upsert_menus(url, key, rows, http)
-                replace_station_rows(url, key, d, menus, stations, http)
-            except (SupabaseError, httpx.HTTPError) as exc:
-                problems.append(f"menus store: {exc}")
+        for hall in STORED_HALLS:
+            for meal in STORED_MEALS:
+                try:
+                    week = fetch(hall, meal, d)
+                    _store_menu(url, key, hall, meal, week, now, http)
+                except Exception as exc:  # noqa: BLE001 - one menu must not stop the rest
+                    problems.append(f"menus store: {hall}/{meal} for the week of {d}: {exc}")
         try:
-            delete_menus_before(url, key, d - timedelta(days=RETENTION_DAYS), http)
+            delete_before(url, key, d - timedelta(days=RETENTION_DAYS), http)
+            if not problems:
+                record_store_run(url, key, d, now, http)
         except (SupabaseError, httpx.HTTPError) as exc:
             problems.append(f"menus store: {exc}")
     finally:

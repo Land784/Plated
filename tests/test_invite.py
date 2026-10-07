@@ -14,10 +14,18 @@ USER_ID = "8d0f6a5e-4a7a-4b8e-9d55-6a2f1d0c1e11"
 TOPIC = "plated-abcdefghjkmnpqrs"
 
 
+N, S = "north-dining-hall", "south-dining-hall"
+BOTH = [N, S]
+CATALOG_ROWS = (
+    {"station": "La Mesa", "halls": BOTH, "meals": ["dinner", "lunch"], "is_food": True},
+    {"station": "Domer Diner", "halls": BOTH, "meals": ["lunch"], "is_food": True},
+)
+
+
 class FakeSupabase:
     """Answers the handful of requests an invite makes, and records them."""
 
-    def __init__(self, *, subscribers=(), stations=("Domer Diner", "La Mesa"), fail=None):
+    def __init__(self, *, subscribers=(), stations=CATALOG_ROWS, fail=None):
         self.requests: list[httpx.Request] = []
         self.subscribers = list(subscribers)
         self.stations = list(stations)
@@ -31,7 +39,7 @@ class FakeSupabase:
         if path == "/auth/v1/invite":
             return httpx.Response(200, json={"id": USER_ID, "email": "x@nd.edu"})
         if path == "/rest/v1/stations":
-            return httpx.Response(200, json=[{"station": s} for s in self.stations])
+            return httpx.Response(200, json=self.stations)
         if path == "/rest/v1/subscribers" and method == "GET":
             name = request.url.params["name"].removeprefix("eq.")
             return httpx.Response(200, json=[s for s in self.subscribers if s["name"] == name])
@@ -63,6 +71,7 @@ def test_default_row_matches_the_web_apps_first_run_defaults():
     assert row["favorites"] == []
     assert row["user_id"] == USER_ID
     assert row["macros"] is None
+    assert row["max_items_per_station"] == 3
     for day in ("monday", "tuesday", "wednesday", "thursday", "friday"):
         assert row["schedule"][day] == {"lunch": "12:00", "dinner": "17:30"}
     for day in ("saturday", "sunday"):
@@ -91,6 +100,7 @@ def test_invite_creates_the_auth_user_then_the_row():
 
     stations = fake.requests[1]
     assert stations.url.params["is_food"] == "is.true"
+    assert stations.url.params["select"] == "station,halls,meals,is_food"
 
     insert = fake.requests[3]
     body = json.loads(insert.content)
@@ -199,3 +209,30 @@ def test_cli_invites_and_never_prints_a_topic(monkeypatch, capsys):
     out = capsys.readouterr()
     assert "invited new@nd.edu" in out.out
     assert "plated-" not in out.out + out.err
+
+
+def test_catalog_order_matches_the_web_app():
+    rows = [
+        {"station": "Sunrise Kitchen", "halls": [N], "meals": ["breakfast"]},
+        {"station": "Pastaria", "halls": [S], "meals": ["dinner"]},
+        {"station": "curry Bar", "halls": [N], "meals": ["lunch"]},
+        {"station": "The Global Compass", "halls": [N], "meals": ["dinner"]},
+        {"station": "Global Compass", "halls": [S], "meals": ["lunch"]},
+        {"station": "Domer Diner", "halls": BOTH, "meals": ["lunch", "breakfast"]},
+        {"station": "Omelets", "halls": [S], "meals": ["breakfast"]},
+        {"station": "Beverages", "halls": BOTH, "meals": ["lunch"], "is_food": False},
+        {"station": "Elsewhere", "halls": ["east-dining-hall"], "meals": ["lunch"]},
+        {"station": "Athenian Rice Bowl", "halls": [S], "meals": ["lunch"]},
+    ]
+
+    assert invite.catalog_order(rows) == [
+        # Not breakfast-only: both halls, North-only, South-only, by name.
+        "Domer Diner",
+        "Global Compass",  # merged across halls; the spelling without "The"
+        "curry Bar",
+        "Athenian Rice Bowl",
+        "Pastaria",
+        # Breakfast-only, by the same rules.
+        "Sunrise Kitchen",
+        "Omelets",
+    ]

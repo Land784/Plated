@@ -22,7 +22,7 @@ from datetime import date
 import httpx
 
 from menu.macros import Goal
-from menu.users import MacrosConfig, UserConfig, parse_user
+from menu.users import MacrosConfig, UserConfig, UserConfigError, parse_user
 
 URL_ENV = "SUPABASE_URL"
 KEY_ENV = "SUPABASE_SECRET_KEY"
@@ -107,16 +107,38 @@ def fetch_subscriber_rows(url: str, key: str, *, client: httpx.Client | None = N
     return rows
 
 
+def _row_label(row: object) -> str:
+    if isinstance(row, dict):
+        for key in ("name", "id"):
+            value = row.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return "?"
+
+
 def load_users_from_supabase(
     url: str, key: str, *, client: httpx.Client | None = None
-) -> list[UserConfig]:
-    """Load and validate every active subscriber.
+) -> tuple[list[UserConfig], list[str]]:
+    """Load and validate every active subscriber, each row on its own.
 
-    Strict like :func:`menu.users.load_users`: one bad row fails the load
-    rather than silently dropping a subscriber.
+    Returns the valid subscribers and one problem per invalid row
+    ("<name or id>: <error>"). A row that a signed-in user saved in a bad
+    shape must not stop everyone else's notifications, but it must not
+    pass silently either: callers report the problems and fail the run.
     """
-    rows = fetch_subscriber_rows(url, key, client=client)
-    return [parse_user(row, source=f"supabase:{row.get('name', '?')}") for row in rows]
+    users: list[UserConfig] = []
+    problems: list[str] = []
+    for row in fetch_subscriber_rows(url, key, client=client):
+        label = _row_label(row)
+        try:
+            if not isinstance(row, dict):
+                raise UserConfigError(f"{label}: expected an object")
+            users.append(parse_user(row, source=label))
+        except UserConfigError as exc:
+            problems.append(str(exc))  # already starts with the label
+        except (ValueError, TypeError) as exc:  # e.g. int() of a non-number
+            problems.append(f"{label}: {exc}")
+    return users, problems
 
 
 def _goal_to_json(goal: Goal) -> dict:
@@ -170,7 +192,13 @@ def user_to_row(user: UserConfig) -> dict:
 
 
 def upsert_subscriber(
-    url: str, key: str, data: dict, *, source: str, client: httpx.Client | None = None
+    url: str,
+    key: str,
+    data: dict,
+    *,
+    source: str,
+    force: bool = False,
+    client: httpx.Client | None = None,
 ) -> UserConfig:
     """Validate ``data`` like a subscriber file, then insert or update it.
 
@@ -178,11 +206,30 @@ def upsert_subscriber(
     updates that person rather than duplicating them. Every column is
     written from the validated config, defaults included, so a key
     deleted from the file is cleared in the row rather than left stale.
+
+    A row linked to a web account (user_id set) is edited in the app, so
+    it is refused unless ``force``: a push would silently undo the
+    person's own changes.
     """
     user = parse_user(data, source=source)
     row = user_to_row(user)
     http = client or httpx.Client(timeout=TIMEOUT)
     try:
+        if not force:
+            existing = http.get(
+                f"{url}/rest/v1/{TABLE}",
+                params={"select": "name,user_id", "ntfy_topic": f"eq.{user.ntfy_topic}"},
+                headers=api_headers(key),
+            )
+            raise_for_status(existing, f"checking {source}")
+            linked = [r for r in existing.json() if r.get("user_id")]
+            if linked:
+                # The message names the row, never the topic.
+                raise SupabaseError(
+                    f"{source}: subscriber {linked[0].get('name')!r} has a web account and "
+                    "edits their settings in the app; pushing would overwrite them. "
+                    "Use --force to push anyway."
+                )
         response = http.post(
             f"{url}/rest/v1/{TABLE}",
             params={"on_conflict": "ntfy_topic"},

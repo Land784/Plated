@@ -23,6 +23,8 @@
 
 revoke all on public.subscribers from anon;
 revoke all on public.sent_meals from anon;
+-- The send log is the runner's alone; the web app never reads it.
+revoke all on public.sent_meals from authenticated;
 
 revoke all on public.subscribers from authenticated;
 grant select on public.subscribers to authenticated;
