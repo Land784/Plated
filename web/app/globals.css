@@ -1,0 +1,334 @@
+@import "tailwindcss";
+
+/* shadcn/ui "zinc" tokens, as HSL components, light/dark by prefers-color-scheme. */
+:root {
+  --background: 0 0% 100%;
+  --foreground: 240 10% 3.9%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 3.9%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 10% 3.9%;
+  --primary: 240 5.9% 10%;
+  --primary-foreground: 0 0% 98%;
+  --secondary: 240 4.8% 95.9%;
+  --secondary-foreground: 240 5.9% 10%;
+  --muted: 240 4.8% 95.9%;
+  --muted-foreground: 240 3.8% 46.1%;
+  --accent: 240 4.8% 95.9%;
+  --accent-foreground: 240 5.9% 10%;
+  --destructive: 0 72% 51%;
+  --border: 240 5.9% 90%;
+  --input: 240 5.9% 90%;
+  --ring: 240 5.9% 10%;
+  --warning: 48 96% 95%;
+  --warning-foreground: 32 81% 29%;
+  --warning-border: 48 90% 75%;
+  --success: 142 71% 36%;
+  --page: 240 4.8% 97%;
+  --link: 221 83% 53%;
+  --radius: 0.5rem;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 5.9% 10%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 84% 65%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
+    --warning: 32 60% 12%;
+    --warning-foreground: 45 93% 70%;
+    --warning-border: 32 60% 25%;
+    --success: 142 69% 58%;
+    --page: 240 6% 7%;
+    --link: 213 94% 68%;
+  }
+}
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-warning: hsl(var(--warning));
+  --color-warning-foreground: hsl(var(--warning-foreground));
+  --color-warning-border: hsl(var(--warning-border));
+  --color-success: hsl(var(--success));
+  --color-page: hsl(var(--page));
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+  html,
+  body {
+    background: hsl(var(--page));
+    color: hsl(var(--foreground));
+  }
+  body {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+  input[type="time"],
+  input[type="date"] {
+    font-variant-numeric: tabular-nums;
+  }
+  input[type="time"]:disabled {
+    opacity: 0.45;
+  }
+  details > summary {
+    list-style: none;
+  }
+  details > summary::-webkit-details-marker {
+    display: none;
+  }
+  details[open] > summary .chev {
+    transform: rotate(180deg);
+  }
+}
+
+@layer components {
+  /* Segmented control (shadcn Tabs / ToggleGroup look) */
+  .seg {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 4px;
+    border-radius: calc(var(--radius) + 2px);
+    background: hsl(var(--muted));
+  }
+  .seg > button {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 2rem;
+    padding: 0 0.5rem;
+    border-radius: calc(var(--radius) - 2px);
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: hsl(var(--muted-foreground));
+    white-space: nowrap;
+    transition: background 0.15s, color 0.15s;
+  }
+  .seg > button[aria-pressed="true"] {
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.08), 0 1px 3px rgb(0 0 0 / 0.06);
+  }
+  .seg > button:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 1px;
+  }
+
+  /* Step 1: big radio cards */
+  .choice {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    gap: 1rem;
+    min-height: 4.75rem;
+    padding: 0.875rem 1rem;
+    text-align: left;
+    border: 2px solid hsl(var(--border));
+    border-radius: calc(var(--radius) + 4px);
+    background: hsl(var(--card));
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .choice[aria-checked="true"] {
+    border-color: hsl(var(--primary));
+    background: hsl(var(--accent) / 0.5);
+  }
+  .radio {
+    flex: none;
+    width: 1.25rem;
+    height: 1.25rem;
+    border-radius: 999px;
+    border: 2px solid hsl(var(--input));
+  }
+  .choice[aria-checked="true"] .radio {
+    border-color: hsl(var(--primary));
+    background: hsl(var(--primary));
+    box-shadow: inset 0 0 0 3px hsl(var(--background));
+  }
+
+  /* Step 2: meal chips */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    height: 2.75rem;
+    padding: 0 1rem;
+    border-radius: 999px;
+    border: 1px solid hsl(var(--input));
+    background: hsl(var(--background));
+    font-size: 0.9375rem;
+    font-weight: 500;
+    transition: background 0.15s, color 0.15s;
+  }
+  .chip[aria-pressed="true"] {
+    background: hsl(var(--primary));
+    border-color: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+  }
+
+  /* Step 3: station cards */
+  .stcard {
+    display: flex;
+    width: 100%;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.875rem 3.25rem 0.875rem 0.875rem;
+    text-align: left;
+    border: 1px solid hsl(var(--border));
+    border-radius: calc(var(--radius) + 4px);
+    background: hsl(var(--card));
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .stcard[aria-pressed="true"] {
+    border-color: hsl(var(--primary) / 0.55);
+  }
+  .stcard[aria-pressed="false"] {
+    background: hsl(var(--muted) / 0.45);
+    border-style: dashed;
+    box-shadow: none;
+  }
+  .stcard[aria-pressed="false"] .st-name {
+    color: hsl(var(--muted-foreground));
+  }
+  .stcard[aria-pressed="false"] .st-dish,
+  .stcard[aria-pressed="false"] [data-slot="badge"] {
+    opacity: 0.6;
+  }
+  .tick {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 1.375rem;
+    height: 1.375rem;
+    margin-top: 1px;
+    border-radius: 999px;
+    border: 1.5px solid hsl(var(--input));
+    color: transparent;
+  }
+  .stcard[aria-pressed="true"] .tick {
+    background: hsl(var(--primary));
+    border-color: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+  }
+  .star {
+    position: absolute;
+    top: 0.25rem;
+    right: 0.25rem;
+    display: grid;
+    place-items: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    border-radius: var(--radius);
+    color: hsl(var(--muted-foreground));
+  }
+  .star[aria-pressed="true"] {
+    color: #f59e0b;
+  }
+  .star[aria-pressed="true"] svg {
+    fill: currentColor;
+  }
+  .star:focus-visible,
+  .stcard:focus-visible,
+  .choice:focus-visible,
+  .chip:focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+
+  .flash {
+    animation: flash 1.2s ease-out;
+  }
+
+  .clamp4 {
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* Phone notification surfaces (always iOS-like, independent of the app theme) */
+  .lock {
+    background: linear-gradient(160deg, #3f3f46 0%, #18181b 55%, #27272a 100%);
+  }
+  .notif {
+    background: rgb(245 245 245 / 0.82);
+    color: #111;
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
+  }
+  .notif-full {
+    background: hsl(var(--card));
+  }
+  .push-body a {
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    color: hsl(var(--link));
+    word-break: break-all;
+  }
+}
+
+@keyframes flash {
+  from {
+    background: hsl(var(--accent));
+  }
+  to {
+    background: transparent;
+  }
+}
+
+@media (min-width: 768px) {
+  .app-frame {
+    margin-top: 1.5rem;
+    margin-bottom: 2.5rem;
+    min-height: calc(100dvh - 4rem);
+    border-radius: 1.5rem;
+    border: 1px solid hsl(var(--border));
+    box-shadow: 0 30px 60px -20px rgb(0 0 0 / 0.25);
+  }
+}
