@@ -35,11 +35,13 @@ export type CatalogStation = {
 export const BOWLS_ID = "bowls";
 export const BOWLS_LABEL = "Bowls";
 const BOWL_WORD = /\bbowls?\b/;
+/** Non-food names ("Harvest Bowl Toppings") are never grouped, as in the Python rule. */
+const NOT_FOOD_WORD = /condiment|topping|dressing/;
 
 /** Mirrors menu/digest.py normalize_station(), including the bowls group. */
 export function normalizeStation(name: string): string {
   const id = name.replace(/\s+/g, " ").trim().toLowerCase().replace(/^the\s+/, "");
-  return BOWL_WORD.test(id) ? BOWLS_ID : id;
+  return BOWL_WORD.test(id) && !NOT_FOOD_WORD.test(id) ? BOWLS_ID : id;
 }
 
 export function isBowlsGroup(station: Pick<CatalogStation, "id">): boolean {

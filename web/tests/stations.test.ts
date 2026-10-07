@@ -193,6 +193,12 @@ describe("bowls group", () => {
     expect(normalizeStation("Superbowl Snacks")).toBe("superbowl snacks");
   });
 
+  it("leaves non-food bowl names ungrouped", () => {
+    expect(normalizeStation("Harvest Bowl Toppings")).toBe("harvest bowl toppings");
+    expect(normalizeStation("The Bowl Condiments")).toBe("bowl condiments");
+    expect(normalizeStation("Rice Bowl Dressings")).toBe("rice bowl dressings");
+  });
+
   // The view returns one "Bowls" row; raw bowl spellings must still merge into it.
   const bowlsCatalog = buildCatalog([
     { station: "Bowls", halls: [S], meals: ["lunch", "dinner"], is_food: true, example_dishes: ["Athenian Rice Bowl", "Harvest Bowl"] },
