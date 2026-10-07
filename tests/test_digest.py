@@ -20,6 +20,7 @@ from menu.digest import (
     normalize_station,
     notification_title,
     station_lineup,
+    station_mains,
     stations_in_allowlist_order,
 )
 from menu.macros import Goal
@@ -204,6 +205,25 @@ def test_dish_words_match_whole_words_only():
     assert names == ["Grilled Hot Dog", "Pork Chop"]
 
 
+def test_a_weight_portion_unit_does_not_make_a_main():
+    # Curtido, a 1g slaw, is served as "4 oz portion".
+    day = _day([_header("La Mesa"), _food("Curtido", 1, 30, unit="oz portion")])
+    assert station_mains(group_by_station(day)[0], RULE) == []
+
+
+def test_plural_dish_units_count():
+    day = _day(
+        [
+            _header("Grill"),
+            _food("Tacos", 3, 160, unit="tacos"),
+            _food("Wings", 5, 200, unit="wings"),
+            _food("Sliders", 8, 200, unit="patties"),
+        ]
+    )
+    names = station_lineup(group_by_station(day)[0], MainsRule(10, 1200, 5))
+    assert names == ["Sliders", "Wings", "Tacos"]
+
+
 def test_main_protein_floor_is_per_subscriber():
     rule = MainsRule(min_protein_g=20, max_item_calories=1200, max_items=3)
     assert station_lineup(_station(NORTH, "Mezze"), rule) == ["Pork Tenderloin Agrodolce"]
@@ -297,6 +317,17 @@ def test_different_combos_get_a_block_per_hall_with_misses():
             "2× South Steak · 60P · 800 cal",
             "closest: protein 60g (want ≥100g)",
         ],
+    ]
+
+
+def test_same_combo_with_different_allergen_tags_is_not_merged():
+    north = _day([_header("Grill"), _food("Chicken", 40, 300, ["Soy"])])
+    south = _day([_header("Grill"), _food("Chicken", 40, 300, ["High Performance"])])
+    macros = MacrosConfig(goals={"protein": Goal(min=80)})
+    blocks = _picks([("North", north), ("South", south)], ["Grill"], macros=macros)
+    assert [block[0] for block in blocks] == [
+        "PICKS · North · 80P 0C 0F · 600 cal",
+        "PICKS · South · 80P 0C 0F · 600 cal",
     ]
 
 

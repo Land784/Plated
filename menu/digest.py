@@ -49,7 +49,8 @@ _DIETARY_LABELS = frozenset({"vegan", "vegetarian", "high performance"})
 # its protein ("1 taco" at 3g). Units seen in real menus and left out on
 # purpose: slice (a pineapple garnish is "1 Slice"), pizza (bulk rows),
 # bowl ("z bowl" is unclear), tender, bun, egg roll, potsticker, naan,
-# link.
+# link, and portion ("4 oz portion" is a weight, used for slaws and sides
+# too). Plurals ("2 tacos") match as well.
 DISH_WORDS = (
     "taco",
     "burrito",
@@ -68,13 +69,14 @@ DISH_WORDS = (
     "fillet",
     "filet",
     "chop",
-    "portion",
     "rib",
     "wing",
     "shank",
     "wrap",
 )
-_DISH_UNIT = re.compile(r"\b(?:" + "|".join(map(re.escape, DISH_WORDS)) + r")\b", re.IGNORECASE)
+_DISH_UNIT = re.compile(
+    r"\b(?:" + "|".join(map(re.escape, DISH_WORDS)) + r")(?:e?s)?\b", re.IGNORECASE
+)
 
 GLANCE_SIZE = 3
 
@@ -320,8 +322,19 @@ def _pick_line(planned: PlannedItem, flag_unknown: bool) -> str:
 
 
 def _plan_key(plan: MealPlan) -> tuple:
+    """What must match for two halls' picks to share a block.
+
+    Allergen tags are included so a merged block can't hide a flag that
+    one hall's copy of the item would have had.
+    """
     return tuple(
-        (_name(p.item), p.servings, tuple(sorted(p.per_serving.items()))) for p in plan.items
+        (
+            _name(p.item),
+            p.servings,
+            tuple(sorted(p.per_serving.items())),
+            frozenset(tag.name for tag in p.item.food.allergens) if p.item.food else frozenset(),
+        )
+        for p in plan.items
     )
 
 
