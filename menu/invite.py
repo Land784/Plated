@@ -15,10 +15,12 @@ reads or prints it.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 import httpx
 
+from menu.digest import normalize_station
 from menu.supabase_users import (
     TABLE,
     TIMEOUT,
@@ -86,15 +88,52 @@ def _subscribers_named(http: httpx.Client, url: str, key: str, name: str) -> lis
     return response.json()
 
 
+def _has_article(name: str) -> bool:
+    return re.match(r"the\s+", name.strip(), re.IGNORECASE) is not None
+
+
+def catalog_order(rows: list[dict]) -> list[str]:
+    """Station names in the web app's catalog order (web/lib/plated/stations.ts).
+
+    Food stations only, spellings merged by normalized name (preferring
+    one without "The"), then: not breakfast-only before breakfast-only;
+    at both halls, then North-only, then South-only; then by name,
+    ignoring case. A new subscriber's ``stations`` must be in this order,
+    the same list the app would write for "every station on".
+    """
+    merged: dict[str, dict] = {}
+    for row in rows:
+        name = row.get("station")
+        if not isinstance(name, str) or not name.strip() or row.get("is_food") is False:
+            continue
+        acc = merged.setdefault(
+            normalize_station(name), {"names": [], "halls": set(), "meals": set()}
+        )
+        acc["names"].append(name.strip())
+        acc["halls"].update(h for h in row.get("halls") or [] if h in DEFAULT_HALLS)
+        acc["meals"].update(row.get("meals") or [])
+
+    entries = []
+    for acc in merged.values():
+        if not acc["halls"]:
+            continue  # seen only at a hall the app doesn't offer
+        name = next((n for n in acc["names"] if not _has_article(n)), acc["names"][0])
+        breakfast_only = bool(acc["meals"]) and acc["meals"] <= {"breakfast"}
+        north, south = DEFAULT_HALLS
+        hall_rank = 0 if len(acc["halls"]) == 2 else 1 if north in acc["halls"] else 2
+        entries.append((breakfast_only, hall_rank, name.casefold(), name))
+    return [name for *_, name in sorted(entries)]
+
+
 def food_stations(http: httpx.Client, url: str, key: str) -> list[str]:
-    """Every food station seen in the last two weeks, alphabetically."""
+    """Every food station seen in the last two weeks, in catalog order."""
     response = http.get(
         f"{url}/rest/v1/{STATIONS_VIEW}",
-        params={"select": "station", "is_food": "is.true", "order": "station.asc"},
+        params={"select": "station,halls,meals,is_food", "is_food": "is.true"},
         headers=api_headers(key),
     )
     raise_for_status(response, "loading the station catalog")
-    return [row["station"] for row in response.json()]
+    return catalog_order(response.json())
 
 
 def _link_target(http: httpx.Client, url: str, key: str, link: str) -> str:
