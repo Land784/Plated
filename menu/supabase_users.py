@@ -69,8 +69,9 @@ def credentials_from_env() -> tuple[str, str]:
 def api_headers(key: str) -> dict[str, str]:
     headers = {"apikey": key}
     # Legacy service_role keys are JWTs and also go in Authorization.
-    # The newer sb_secret_ keys are not JWTs; the gateway rejects them
-    # there, and needs only the apikey header.
+    # The newer sb_secret_ and sb_publishable_ keys need only the apikey
+    # header (the gateway also accepts an sb_secret_ key as a Bearer,
+    # checked 2026-10-07), so they are sent there alone.
     if key.startswith("eyJ"):
         headers["Authorization"] = f"Bearer {key}"
     return headers
