@@ -1,4 +1,5 @@
 import httpx
+import pytest
 
 from menu import notifier
 from menu.notifier import DISCLAIMER, ConsoleNotifier, NtfyNotifier, compose_body
@@ -33,7 +34,9 @@ def test_ntfy_sends_title_tags_and_click(monkeypatch):
     seen: list[httpx.Request] = []
 
     def post(url, *, timeout, **kwargs):
-        seen.append(httpx.Request("POST", url, **kwargs))
+        request = httpx.Request("POST", url, **kwargs)
+        seen.append(request)
+        return httpx.Response(200, request=request)
 
     monkeypatch.setattr(notifier.httpx, "post", post)
     NtfyNotifier(topic="topic-abc").send(
@@ -57,9 +60,30 @@ def test_ntfy_omits_parameters_that_are_not_given(monkeypatch):
     seen: list[httpx.Request] = []
 
     def post(url, *, timeout, **kwargs):
-        seen.append(httpx.Request("POST", url, **kwargs))
+        request = httpx.Request("POST", url, **kwargs)
+        seen.append(request)
+        return httpx.Response(200, request=request)
 
     monkeypatch.setattr(notifier.httpx, "post", post)
     NtfyNotifier(topic="topic-abc").send("Lunch", "body")
 
     assert dict(seen[0].url.params) == {"title": "Lunch"}
+
+
+def _ntfy_answers(monkeypatch, status: int) -> None:
+    """Route the notifier's request to a mock ntfy that answers ``status``."""
+    client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(status)))
+    monkeypatch.setattr(notifier.httpx, "post", client.post)
+
+
+def test_ntfy_error_raises_without_naming_the_topic(monkeypatch):
+    _ntfy_answers(monkeypatch, 429)
+    with pytest.raises(RuntimeError, match="HTTP 429") as caught:
+        NtfyNotifier(topic="topic-abc").send("Lunch", "body")
+    # The message ends up in the dispatch log; the topic is a secret.
+    assert "topic-abc" not in str(caught.value)
+
+
+def test_ntfy_success_does_not_raise(monkeypatch):
+    _ntfy_answers(monkeypatch, 200)
+    NtfyNotifier(topic="topic-abc").send("Lunch", "body")

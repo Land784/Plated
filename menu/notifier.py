@@ -58,12 +58,16 @@ class NtfyNotifier:
             params["tags"] = ",".join(tags)
         if click:
             params["click"] = click
-        httpx.post(
+        response = httpx.post(
             f"{self.base_url}/{self.topic}",
             params=params,
             content=compose_body(message).encode("utf-8"),
             timeout=10.0,
         )
+        # Not raise_for_status(): its message includes the URL, and so the
+        # topic, which would then be printed in the dispatch problem log.
+        if response.is_error:
+            raise RuntimeError(f"ntfy returned HTTP {response.status_code}")
 
 
 class ConsoleNotifier:
