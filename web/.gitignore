@@ -1,0 +1,28 @@
+# dependencies
+/node_modules
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+/build
+next-env.d.ts
+*.tsbuildinfo
+
+# env files: only the example is committed
+.env*
+!.env.example
+
+# vercel
+.vercel
+
+# python (the preview function in api/)
+__pycache__/
+*.pyc
+
+# misc
+.DS_Store
+*.pem
+npm-debug.log*
