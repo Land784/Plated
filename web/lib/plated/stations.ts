@@ -21,7 +21,7 @@ export type CatalogStation = {
   name: string;
   /** Halls it was seen at, North first. */
   halls: HallKey[];
-  /** Seen only at breakfast. */
+  /** Seen only at breakfast and/or brunch. */
   breakfastOnly: boolean;
   /** Up to 3 recent mains, most frequent first. */
   dishes: string[];
@@ -32,7 +32,10 @@ export function normalizeStation(name: string): string {
   return name.replace(/\s+/g, " ").trim().toLowerCase().replace(/^the\s+/, "");
 }
 
-const hasArticle = (name: string) => /^the\s+/i.test(name.trim());
+/** A station seen only at these meals is a breakfast station (weekend brunch reuses them). */
+const BREAKFAST_MEALS = new Set(["breakfast", "brunch"]);
+
+const hasArticle =(name: string) => /^the\s+/i.test(name.trim());
 
 /**
  * Turn view rows into the catalog: food stations only, shared spellings
@@ -71,7 +74,7 @@ export function buildCatalog(rows: StationViewRow[]): CatalogStation[] {
       id,
       name,
       halls: (["N", "S"] as HallKey[]).filter((h) => acc.halls.has(h)),
-      breakfastOnly: meals.length > 0 && meals.every((m) => m === "breakfast"),
+      breakfastOnly: meals.length > 0 && meals.every((m) => BREAKFAST_MEALS.has(m)),
       dishes: acc.dishes.slice(0, 3),
     });
   }

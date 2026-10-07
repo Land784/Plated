@@ -24,7 +24,10 @@ const VIEW: StationViewRow[] = [
   { station: "Mezze", halls: [S, N], meals: ["lunch", "dinner"], is_food: true, example_dishes: ["Pork Osso Buco"] },
   { station: "The Global Compass", halls: [N], meals: ["dinner"], is_food: true, example_dishes: ["Beef Pad See Ew"] },
   { station: "Global Compass", halls: [S], meals: ["lunch"], is_food: true, example_dishes: ["Pork Potsticker"] },
-  { station: "Sunrise Kitchen", halls: [N], meals: ["breakfast"], is_food: true, example_dishes: null },
+  { station: "Sunrise Kitchen", halls: [N], meals: ["breakfast", "brunch"], is_food: true, example_dishes: null },
+  { station: "Bar, MYOO", halls: [N], meals: ["brunch", "breakfast"], is_food: true, example_dishes: [] },
+  { station: "Waffle Bar", halls: [S], meals: ["brunch"], is_food: true, example_dishes: [] },
+  { station: "Brunch Grill", halls: [S], meals: ["brunch", "lunch"], is_food: true, example_dishes: [] },
   { station: "Beverages", halls: [N, S], meals: ["lunch"], is_food: false, example_dishes: [] },
   { station: "Green & Grains", halls: [N], meals: ["lunch", "dinner"], is_food: true, example_dishes: ["Southwest Salad"] },
   { station: "Domer Diner", halls: [N, S], meals: ["breakfast", "lunch"], is_food: true, example_dishes: ["Smash Burger"] },
@@ -45,18 +48,22 @@ describe("catalog", () => {
       "Global Compass",
       "Mezze",
       "Green & Grains",
+      "Brunch Grill",
       "Pastaria",
+      "Bar, MYOO",
       "Sunrise Kitchen",
       "Omelets",
+      "Waffle Bar",
     ]);
     const compass = catalog.find((s) => s.id === "global compass")!;
     expect(compass.halls).toEqual(["N", "S"]);
     expect(compass.dishes).toEqual(["Beef Pad See Ew", "Pork Potsticker"]);
   });
 
-  it("tags a station breakfast-only only when breakfast is its only meal", () => {
+  it("tags a station breakfast-only when it was seen only at breakfast and/or brunch", () => {
     const tagged = catalog.filter((s) => s.breakfastOnly).map((s) => s.name);
-    expect(tagged).toEqual(["Sunrise Kitchen", "Omelets"]);
+    // Brunch Grill also serves lunch, so it is not a breakfast station.
+    expect(tagged).toEqual(["Bar, MYOO", "Sunrise Kitchen", "Omelets", "Waffle Bar"]);
   });
 
   it("hides stations from a hall you didn't pick", () => {
@@ -65,6 +72,7 @@ describe("catalog", () => {
       "Global Compass",
       "Mezze",
       "Green & Grains",
+      "Bar, MYOO",
       "Sunrise Kitchen",
     ]);
   });
@@ -87,8 +95,11 @@ describe("stations written on save", () => {
       "Domer Diner",
       "Global Compass",
       "Green & Grains",
+      "Brunch Grill",
+      "Bar, MYOO",
       "Sunrise Kitchen",
       "Omelets",
+      "Waffle Bar",
     ]);
     expect(deriveFavorites(catalog, sel)).toEqual(["Mezze", "Pastaria"]);
   });
@@ -106,7 +117,9 @@ describe("stations written on save", () => {
   it("reads a row's allowlist back: missing stations are off, names match loosely", () => {
     const sel = selectionFromRow(["the global compass", "Mezze", "Old Station"], ["Mezze"], catalog);
     expect(sel.favorites).toEqual(["mezze"]);
-    expect(sel.off).toEqual(ids(["Domer Diner", "Green & Grains", "Pastaria", "Sunrise Kitchen", "Omelets"]));
+    expect(sel.off).toEqual(
+      ids(["Domer Diner", "Green & Grains", "Brunch Grill", "Pastaria", "Bar, MYOO", "Sunrise Kitchen", "Omelets", "Waffle Bar"]),
+    );
     expect(sel.extra).toEqual(["Old Station"]);
     expect(deriveStations(catalog, sel)).toEqual(["Mezze", "Global Compass", "Old Station"]);
   });
@@ -163,7 +176,7 @@ describe("row <-> form", () => {
 
   it("validates steps against the halls you picked", () => {
     let form = formFromRow(row, catalog);
-    form = { ...form, hallChoice: "S", stations: { ...form.stations, off: ids(["Domer Diner", "Global Compass", "Mezze", "Pastaria", "Omelets"]) } };
+    form = { ...form, hallChoice: "S", stations: { ...form.stations, off: ids(["Domer Diner", "Global Compass", "Mezze", "Brunch Grill", "Pastaria", "Omelets", "Waffle Bar"]) } };
     expect(stepValid(form, catalog, "what")).toBe(false);
     expect(stepValid({ ...form, hallChoice: "N" }, catalog, "what")).toBe(true);
   });
