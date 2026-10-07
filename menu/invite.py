@@ -96,7 +96,8 @@ def catalog_order(rows: list[dict]) -> list[str]:
     """Station names in the web app's catalog order (web/lib/plated/stations.ts).
 
     Food stations only, spellings merged by normalized name (preferring
-    one without "The"), then: not breakfast-only before breakfast-only;
+    one without "The"), then: not breakfast-only (seen only at breakfast or
+    brunch) before breakfast-only;
     at both halls, then North-only, then South-only; then by name,
     ignoring case. A new subscriber's ``stations`` must be in this order,
     the same list the app would write for "every station on".
@@ -118,7 +119,8 @@ def catalog_order(rows: list[dict]) -> list[str]:
         if not acc["halls"]:
             continue  # seen only at a hall the app doesn't offer
         name = next((n for n in acc["names"] if not _has_article(n)), acc["names"][0])
-        breakfast_only = bool(acc["meals"]) and acc["meals"] <= {"breakfast"}
+        # Breakfast stations also serve weekend brunch (Sunrise Kitchen).
+        breakfast_only = bool(acc["meals"]) and acc["meals"] <= {"breakfast", "brunch"}
         north, south = DEFAULT_HALLS
         hall_rank = 0 if len(acc["halls"]) == 2 else 1 if north in acc["halls"] else 2
         entries.append((breakfast_only, hall_rank, name.casefold(), name))

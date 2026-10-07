@@ -213,8 +213,9 @@ def test_cli_invites_and_never_prints_a_topic(monkeypatch, capsys):
 
 def test_catalog_order_matches_the_web_app():
     rows = [
-        {"station": "Sunrise Kitchen", "halls": [N], "meals": ["breakfast"]},
+        {"station": "Sunrise Kitchen", "halls": [N], "meals": ["breakfast", "brunch"]},
         {"station": "Pastaria", "halls": [S], "meals": ["dinner"]},
+        {"station": "Waffle Bar", "halls": BOTH, "meals": ["brunch", "lunch"]},
         {"station": "curry Bar", "halls": [N], "meals": ["lunch"]},
         {"station": "The Global Compass", "halls": [N], "meals": ["dinner"]},
         {"station": "Global Compass", "halls": [S], "meals": ["lunch"]},
@@ -229,6 +230,7 @@ def test_catalog_order_matches_the_web_app():
         # Not breakfast-only: both halls, North-only, South-only, by name.
         "Domer Diner",
         "Global Compass",  # merged across halls; the spelling without "The"
+        "Waffle Bar",  # brunch and lunch is not breakfast-only
         "curry Bar",
         "Athenian Rice Bowl",
         "Pastaria",
