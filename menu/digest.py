@@ -132,6 +132,9 @@ NON_FOOD_STATIONS = frozenset(
         "desserts",
     }
 )
+# Any station whose normalized name contains one of these is an add-on
+# bar, not a meal ("Grill Condiments", "Omelette Toppings").
+NON_FOOD_WORDS = ("condiment", "topping", "dressing")
 _AMPERSAND = re.compile(r"\s*&\s*")
 
 
@@ -191,9 +194,14 @@ def normalize_station(name: str) -> str:
 
 
 def is_food_station(name: str) -> bool:
-    """False for a station in NON_FOOD_STATIONS (drinks, toppings, the salad bar)."""
-    key = _AMPERSAND.sub(" and ", normalize_station(name).replace("-", " "))
-    return normalize_station(key) not in NON_FOOD_STATIONS
+    """False for a station in NON_FOOD_STATIONS (drinks, toppings, the salad bar).
+
+    Also false when the name contains one of NON_FOOD_WORDS, which live
+    menus attach to many stations ("Deli Condiments", "MYO Pizza
+    Toppings", "Salad Bar Dressing").
+    """
+    key = normalize_station(_AMPERSAND.sub(" and ", normalize_station(name).replace("-", " ")))
+    return key not in NON_FOOD_STATIONS and not any(word in key for word in NON_FOOD_WORDS)
 
 
 def group_by_station(day: DayMenu) -> list[Station]:

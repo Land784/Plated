@@ -143,6 +143,22 @@ def test_non_food_stations(name):
 
 
 @pytest.mark.parametrize(
+    "name",
+    [
+        "Deli Condiments",
+        "Grill Condiments",
+        "Deli Topping",
+        "MYO Pizza Toppings",
+        "Salad Bar Dressing",
+        "Omelette Toppings",
+        "MYO Omelette Toppings",
+    ],
+)
+def test_add_on_bars_are_not_food(name):
+    assert not is_food_station(name)
+
+
+@pytest.mark.parametrize(
     "name", ["Domer Diner", "The Global Compass", "Breakfast", "Omelets", "Sunrise Kitchen"]
 )
 def test_food_stations(name):
@@ -199,6 +215,36 @@ def test_a_station_repeated_in_one_menu_is_one_row():
     )
     rows = menus_store.station_rows(DAY, "north-dining-hall", "lunch", day)
     assert [(r["station"], r["mains"]) for r in rows] == [("Grill", ["Chicken"])]
+
+
+def test_deleted_rows_are_never_example_dishes_but_stay_in_the_items():
+    day = DayMenu.model_validate(
+        {
+            "date": "2026-09-24",
+            "menu_items": [
+                {"is_station_header": True, "text": "Grill", "station_id": 1},
+                {
+                    "station_id": 1,
+                    "food": {
+                        "name": "DELETED - Beef Stew",
+                        "rounded_nutrition_info": {"g_protein": 40},
+                    },
+                },
+                {
+                    "station_id": 1,
+                    "food": {"name": "Chicken", "rounded_nutrition_info": {"g_protein": 30}},
+                },
+                {"is_station_header": True, "text": "Soup", "station_id": 2},
+                {"station_id": 2, "food": {"name": "Deleted - Chili"}},
+            ],
+        }
+    )
+
+    rows = menus_store.station_rows(DAY, "north-dining-hall", "lunch", day)
+
+    assert [(r["station"], r["mains"]) for r in rows] == [("Grill", ["Chicken"]), ("Soup", [])]
+    names = [i["food"]["name"] for i in menus_store.trim_day(day) if "food" in i]
+    assert "DELETED - Beef Stew" in names
 
 
 def test_menu_row_is_none_for_an_empty_menu():

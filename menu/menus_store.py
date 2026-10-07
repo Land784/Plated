@@ -69,6 +69,9 @@ EXAMPLE_RULE = MainsRule(
     max_items=STORED_MAINS,
 )
 
+# Upstream's name prefix for a withdrawn recipe ("Deleted - Beef Stew").
+DELETED_PREFIX = "deleted - "
+
 # The nutrition keys the models read, under Nutrislice's names.
 NUTRITION_KEYS = ("calories", "g_protein", "g_fat", "g_carbs", "mg_sodium", "g_fiber", "g_sugar")
 
@@ -132,6 +135,20 @@ def _merged_stations(day: DayMenu) -> list[Station]:
     return list(merged.values())
 
 
+def _not_deleted(station: Station) -> Station:
+    """The station without rows Nutrislice names "Deleted - ...".
+
+    Only for example dishes: the push and the stored items pass them
+    through, as CLAUDE.md asks, but a picker card shouldn't advertise one.
+    """
+    kept = [
+        item
+        for item in station.items
+        if not (item.food and item.food.name.strip().lower().startswith(DELETED_PREFIX))
+    ]
+    return Station(station.name, kept)
+
+
 def station_rows(d: date, hall: str, meal: str, day: DayMenu) -> list[dict]:
     """One ``menu_stations`` row per station, with the names the push would list."""
     return [
@@ -142,7 +159,7 @@ def station_rows(d: date, hall: str, meal: str, day: DayMenu) -> list[dict]:
             "station": station.name,
             "normalized": normalize_station(station.name),
             "is_food": is_food_station(station.name),
-            "mains": station_lineup(station, EXAMPLE_RULE),
+            "mains": station_lineup(_not_deleted(station), EXAMPLE_RULE),
         }
         for station in _merged_stations(day)
     ]
