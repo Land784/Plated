@@ -12,7 +12,14 @@ from zoneinfo import ZoneInfo
 from menu import client, supabase_users
 from menu.allergens import UnknownAllergenPolicy
 from menu.config import PlatedConfig, load_config
-from menu.digest import build_hall_section, build_picks_section
+from menu.digest import (
+    build_message,
+    build_picks_blocks,
+    hall_page_url,
+    join_blocks,
+    meal_tags,
+    notification_title,
+)
 from menu.macros import Goal, describe_goal
 from menu.models import DayMenu, MenuItem
 from menu.notifier import ConsoleNotifier, NtfyNotifier
@@ -68,7 +75,8 @@ def _build_today_picks(config: PlatedConfig, meal: str | None) -> tuple[str, lis
     """Picks for config.toml's single user, from every station of each hall.
 
     config.toml predates subscriber files, so its protein target and
-    calorie cap are translated into [macros] goals here.
+    calorie cap are translated into [macros] goals here. Halls are
+    labelled with config.toml's names as written.
     """
     meal_period, menu_type = _meal_period_and_type(config, meal)
     days = _fetch_all_halls(config, menu_type, date.today())
@@ -80,10 +88,10 @@ def _build_today_picks(config: PlatedConfig, meal: str | None) -> tuple[str, lis
         exclude_allergens=list(config.excluded_allergens),
         unknown_allergens=UnknownAllergenPolicy(config.unknown_allergen_policy),
     )
-    lines = build_picks_section(
+    blocks = build_picks_blocks(
         list(days.items()), None, MacrosConfig(goals=goals), picks, meal_period
     )
-    return meal_period, lines or ["No items met the goals."]
+    return meal_period, join_blocks(blocks) or ["No items met the goals."]
 
 
 def _format_plans(meal_period: str, lines: list[str]) -> str:
@@ -109,13 +117,12 @@ def cmd_notify(args: argparse.Namespace) -> int:
     message = _format_plans(meal_period, lines)
 
     notifier = NtfyNotifier(topic=config.ntfy_topic) if config.ntfy_topic else ConsoleNotifier()
-    notifier.send(title=f"Dining hall plan: {meal_period}", message=message)
+    notifier.send(
+        title=notification_title(meal_period, date.today()),
+        message=message,
+        tags=meal_tags(meal_period),
+    )
     return 0
-
-
-def _hall_label(slug: str) -> str:
-    """ "north-dining-hall" -> "North Dining Hall"."""
-    return slug.replace("-", " ").title()
 
 
 def _resolve_now(raw: str | None, tz_name: str) -> datetime:
@@ -134,34 +141,9 @@ def _resolve_now(raw: str | None, tz_name: str) -> datetime:
 
 
 def _build_message(user: UserConfig, meal: str, local_date: date) -> list[str]:
-    """Meal picks (if configured) followed by each hall's stations.
-
-    Returns [] when no hall has station content. Picks alone never make a
-    message: they come from the same stations, so an empty station list
-    means no menu was published.
-    """
-    halls = [(_hall_label(hall), client.fetch_day(hall, meal, local_date)) for hall in user.halls]
-    cap = user.max_items_per_station
-    station_blocks = [
-        section
-        for hall_name, day in halls
-        if (section := build_hall_section(hall_name, day, user.stations, cap))
-    ]
-    if not station_blocks:
-        return []
-
-    blocks = station_blocks
-    if user.macros is not None:
-        picks = build_picks_section(halls, user.stations, user.macros, user.picks, meal)
-        if picks:
-            blocks = [picks, *station_blocks]
-
-    lines: list[str] = []
-    for block in blocks:
-        if lines:
-            lines.append("")
-        lines.extend(block)
-    return lines
+    """Fetch the subscriber's halls and build the message; [] if nothing to send."""
+    menus = {hall: client.fetch_day(hall, meal, local_date) for hall in user.halls}
+    return build_message(user, menus, meal)
 
 
 def cmd_dispatch(args: argparse.Namespace) -> int:
@@ -209,10 +191,14 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
                 problems.append(f"{label}: nothing to send ({detail})")
                 continue
 
-            title = f"{due.meal.replace('-', ' ').title()} - {due.local_date:%a %b %d}"
             notifier = ConsoleNotifier() if args.dry_run else NtfyNotifier(topic=user.ntfy_topic)
             try:
-                notifier.send(title=title, message="\n".join(sections))
+                notifier.send(
+                    title=notification_title(due.meal, due.local_date),
+                    message="\n".join(sections),
+                    tags=meal_tags(due.meal),
+                    click=hall_page_url(user.halls[0]),
+                )
                 sent += 1
             except Exception as exc:  # noqa: BLE001
                 problems.append(f"{label}: send failed: {exc}")

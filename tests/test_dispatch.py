@@ -1,7 +1,9 @@
 from datetime import date
 
 from menu import cli
+from menu.config import DiningHallConfig, PlatedConfig
 from menu.models import DayMenu
+from menu.notifier import DISCLAIMER
 from menu.users import parse_user
 
 MENU = DayMenu.model_validate(
@@ -37,21 +39,20 @@ def _serve(monkeypatch, day: DayMenu | None) -> None:
     monkeypatch.setattr(cli.client, "fetch_day", lambda hall, meal, d: day)
 
 
-def test_picks_lead_the_message(monkeypatch):
+def test_picks_follow_the_glance(monkeypatch):
     _serve(monkeypatch, MENU)
     user = parse_user({**USER, "macros": {"protein": {"target": 40}}}, "test")
 
     lines = cli._build_message(user, "dinner", date(2026, 9, 24))
 
     assert lines == [
-        "PICKS: protein 34-46g",
-        "North Dining Hall: 40P 0C 5F · 300 cal",
-        "  Grilled Chicken",
-        "     40P 0C 5F · 300 cal · allergens unknown",
+        "North: Grilled Chicken",
         "",
-        "NORTH DINING HALL",
-        "Grill",
-        "  Grilled Chicken",
+        "PICKS · North · 40P 0C 5F · 300 cal",
+        "Grilled Chicken · 40P · 300 cal",
+        "",
+        "NORTH",
+        "Grill: Grilled Chicken",
     ]
 
 
@@ -61,7 +62,7 @@ def test_subscriber_without_macros_gets_the_plain_digest(monkeypatch):
 
     lines = cli._build_message(user, "dinner", date(2026, 9, 24))
 
-    assert lines == ["NORTH DINING HALL", "Grill", "  Grilled Chicken"]
+    assert lines == ["North: Grilled Chicken", "", "NORTH", "Grill: Grilled Chicken"]
 
 
 def test_no_published_menu_means_no_message(monkeypatch):
@@ -77,7 +78,7 @@ class _Recorder:
     def __init__(self, monkeypatch, *, claimed=True, send_fails=False, menu=MENU):
         self.claims: list[tuple] = []
         self.releases: list[tuple] = []
-        self.sent: list[str] = []
+        self.sent: list[dict] = []
         user = parse_user(
             {**USER, "id": "3f1c", "schedule": {"friday": {"lunch": "11:15"}}}, "test"
         )
@@ -94,10 +95,10 @@ class _Recorder:
         )
         _serve(monkeypatch, menu)
 
-        def send(notifier, title, message):
+        def send(notifier, title, message, **headers):
             if send_fails:
                 raise RuntimeError("ntfy down")
-            self.sent.append(title)
+            self.sent.append({"title": title, **headers})
 
         monkeypatch.setattr(cli.NtfyNotifier, "send", send)
 
@@ -109,7 +110,13 @@ def test_a_claimed_meal_is_sent_once(monkeypatch):
     rec = _Recorder(monkeypatch)
     assert rec.run() == 0
     assert rec.claims == [("3f1c", "lunch", date(2026, 9, 25))]
-    assert rec.sent == ["Lunch - Fri Sep 25"]
+    assert rec.sent == [
+        {
+            "title": "Lunch · Fri Sep 25",
+            "tags": ["sandwich"],
+            "click": "https://nd.nutrislice.com/menu/north-dining-hall/",
+        }
+    ]
 
 
 def test_a_meal_already_claimed_by_an_earlier_run_is_skipped(monkeypatch):
@@ -140,3 +147,32 @@ def test_a_meal_past_the_window_is_not_sent(monkeypatch):
     rec = _Recorder(monkeypatch)
     assert rec.run(now="2026-09-25T12:30") == 0
     assert rec.claims == []
+
+
+def _dev_config(monkeypatch) -> None:
+    """config.toml for the plan/notify dev commands, without a topic so nothing is sent."""
+    config = PlatedConfig(
+        dining_halls=[DiningHallConfig(slug="north-dining-hall", name="North Dining Hall")],
+        meal_types={"dinner": "dinner"},
+    )
+    monkeypatch.setattr(cli, "load_config", lambda: config)
+    _serve(monkeypatch, MENU)
+
+
+def test_plan_command_prints_the_picks_block(monkeypatch, capsys):
+    _dev_config(monkeypatch)
+    assert cli.main(["plan", "--meal", "dinner"]) == 0
+    assert capsys.readouterr().out == (
+        "Meal plan (dinner):\n"
+        "PICKS · North Dining Hall · 40P 0C 5F · 300 cal\n"
+        "Grilled Chicken · 40P · 300 cal\n"
+    )
+
+
+def test_notify_command_without_a_topic_prints_to_the_console(monkeypatch, capsys):
+    _dev_config(monkeypatch)
+    assert cli.main(["notify", "--meal", "dinner"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("=== Dinner · ")
+    assert "\ntags: plate_with_cutlery\n" in out
+    assert out.endswith(f"\n\n{DISCLAIMER}\n")
