@@ -25,7 +25,7 @@ from menu.digest import (
 )
 from menu.macros import Goal
 from menu.models import DayMenu, WeekMenu
-from menu.notifier import compose_body
+from menu.notifier import SEPARATOR, compose_body
 from menu.users import MacrosConfig, PicksConfig, parse_user
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -174,21 +174,37 @@ def test_mains_rank_by_protein_and_are_capped():
     ]
 
 
-def test_bulk_rows_never_qualify_but_the_station_still_shows_one():
-    # All three are whole pizzas at 2473-3996 cal; the fallback ignores
-    # the ceiling and shows the highest-protein one.
-    assert station_lineup(_station(NORTH, "Crust & Co"), RULE) == ["Pepperoni Pizza"]
+def test_bulk_rows_never_qualify_but_the_station_still_shows_its_items():
+    # All three are whole pizzas at 2473-3996 cal, so none is a main; the
+    # fallback skips nothing and lists them by protein.
+    assert station_mains(_station(NORTH, "Crust & Co"), RULE) == []
+    assert station_lineup(_station(NORTH, "Crust & Co"), RULE) == [
+        "Pepperoni Pizza",
+        "Elote Pizza",
+        "Cheese Pizza",
+    ]
 
 
-def test_a_station_with_no_main_falls_back_to_its_highest_protein_item():
+def test_a_station_with_no_main_lists_its_items_by_protein():
     # Pastaria is a build-your-own bar; nothing reaches 10g. Two items
     # tie at 6g, and the tie goes to menu order.
-    assert station_lineup(_station(SOUTH, "Pastaria"), RULE) == ["Halal Chicken & Beef Pepperoni"]
+    assert station_lineup(_station(SOUTH, "Pastaria"), RULE) == [
+        "Halal Chicken & Beef Pepperoni",
+        "Elbow Macaroni",
+        "Penne Pasta",
+    ]
 
 
-def test_fallback_without_any_protein_value_is_the_first_item():
-    day = _day([_header("Pastaria"), _food("Penne", None, 200), _food("Pesto", None, 150)])
-    assert station_lineup(group_by_station(day)[0], RULE) == ["Penne"]
+def test_fallback_puts_items_without_protein_last_in_menu_order():
+    day = _day(
+        [
+            _header("Pastaria"),
+            _food("Penne", None, 200),
+            _food("Pesto", None, 150),
+            _food("Parmesan", 3, 30),
+        ]
+    )
+    assert station_lineup(group_by_station(day)[0], RULE) == ["Parmesan", "Penne", "Pesto"]
 
 
 def test_dish_words_match_whole_words_only():
@@ -203,6 +219,24 @@ def test_dish_words_match_whole_words_only():
     )
     names = station_lineup(group_by_station(day)[0], RULE)
     assert names == ["Grilled Hot Dog", "Pork Chop"]
+
+
+def test_per_piece_units_are_mains_but_a_bread_roll_is_not():
+    day = _day(
+        [
+            _header("Global Compass"),
+            _food("Pork Potsticker", 3, 50, unit="potsticker"),
+            _food("Steamed Pork Pot Sticker", 3, 50, unit="pot sticker"),
+            _food("Egg Roll", 3, 168, unit="egg roll"),
+            _food("Steamed Pork Bao Bun", 6, 130, unit="bun"),
+            _food("Vegetarian Shepherd's Pie", 9, 321, unit="casserole dish"),
+            _food("Spanakopita", 5, 160, unit="spanakopita"),
+            _food("Yeast Roll", 4, 151, unit="roll"),
+        ]
+    )
+    names = [item.food.name for item in station_mains(group_by_station(day)[0], RULE)]
+    assert "Yeast Roll" not in names
+    assert len(names) == 6
 
 
 def test_a_weight_portion_unit_does_not_make_a_main():
@@ -432,37 +466,50 @@ def test_real_dinner_message():
         "2× Garden Herb Grilled Chicken · 42P · 178 cal",
         "Pork Tenderloin Agrodolce · 36P · 335 cal",
         "",
-        "NORTH",
-        "Domer Diner: Cantina Sandwich, Smash Burger, Garden Herb Grilled Chicken",
-        "La Mesa: Cochinita Pibil",
-        "Mezze: Pork Tenderloin Agrodolce, Quinoa, Pork Osso Buco",
-        "Crust & Co: Pepperoni Pizza",
-        "Green & Grains: Southwest Salad",
-        "Comfort Kitchen: Fried Catfish, Dirty Rice",
-        "The Global Compass: Beef Pad See Ew",
+        SEPARATOR,
+        "NORTH FULL MENU",
+        "• Domer Diner: Cantina Sandwich, Smash Burger, Garden Herb Grilled Chicken",
+        "• La Mesa: Cochinita Pibil",
+        "• Mezze: Pork Tenderloin Agrodolce, Quinoa, Pork Osso Buco",
+        "• Crust & Co: Pepperoni Pizza, Elote Pizza, Cheese Pizza",
+        "• Green & Grains: Southwest Salad",
+        "• Comfort Kitchen: Fried Catfish, Dirty Rice",
+        "• The Global Compass: Beef Pad See Ew, Pork Potsticker",
         "",
-        "SOUTH",
-        "Domer Diner: Garden Herb Grilled Chicken, Smash Beef Patty, Black Bean Veggie Burger",
-        "La Mesa: Tacos Al Pastor",
-        "Mezze: Pork Tenderloin Agrodolce",
-        "Crust & Co: Pepperoni & Cheese French Bread Pizza, Meatball Pizza, Pepperoni Pizza",
-        "Comfort Kitchen: Mushroom Florentine Pork Chops, Beef Au Poivre",
-        "Global Compass: Beef Pad See Ew",
-        "Pastaria: Halal Chicken & Beef Pepperoni",
-        "Pasta Stir Fry: Pasta Stir-Fry Station",
+        SEPARATOR,
+        "SOUTH FULL MENU",
+        "• Domer Diner: Garden Herb Grilled Chicken, Smash Beef Patty, Black Bean Veggie Burger",
+        "• La Mesa: Tacos Al Pastor",
+        "• Mezze: Pork Tenderloin Agrodolce",
+        "• Crust & Co: Pepperoni & Cheese French Bread Pizza, Meatball Pizza, Pepperoni Pizza",
+        "• Comfort Kitchen: Mushroom Florentine Pork Chops, Beef Au Poivre",
+        "• Global Compass: Beef Pad See Ew",
+        "• Pastaria: Halal Chicken & Beef Pepperoni, Elbow Macaroni, Penne Pasta",
+        "• Pasta Stir Fry: Pasta Stir-Fry Station",
     ]
+
+
+def test_without_picks_the_glance_runs_straight_into_the_first_hall():
+    lines = build_message(_user(macros=None), MENUS, "dinner")
+    assert lines[2:5] == ["", SEPARATOR, "NORTH FULL MENU"]
+
+
+def test_the_disclaimer_gets_its_own_separator():
+    body = compose_body("\n".join(build_message(_user(), MENUS, "dinner")))
+    assert body.endswith(f"\n\n{SEPARATOR}\nData may be incomplete; confirm allergens with staff.")
+    assert SEPARATOR == "\u2500" * 10
 
 
 def test_subscriber_without_macros_gets_no_picks():
     lines = build_message(_user(macros=None), MENUS, "dinner")
     assert not any(line.startswith("PICKS") for line in lines)
-    assert lines[3] == "NORTH"
+    assert lines[4] == "NORTH FULL MENU"
 
 
 def test_hall_order_follows_the_subscriber():
     lines = build_message(_user(halls=["south-dining-hall", "north-dining-hall"]), MENUS, "dinner")
     assert lines[0].startswith("South: ")
-    assert lines.index("SOUTH") < lines.index("NORTH")
+    assert lines.index("SOUTH FULL MENU") < lines.index("NORTH FULL MENU")
 
 
 def test_hall_without_a_menu_is_left_out():
@@ -470,7 +517,7 @@ def test_hall_without_a_menu_is_left_out():
         _user(), {"north-dining-hall": None, "south-dining-hall": SOUTH}, "dinner"
     )
     assert lines[0].startswith("South: ")
-    assert "NORTH" not in lines
+    assert "NORTH FULL MENU" not in lines
     assert lines[2] == "PICKS · South · 78P 12C 16F · 513 cal"
 
 
@@ -516,14 +563,14 @@ def test_oversize_message_drops_station_lines_from_the_end():
     assert lines[0].startswith("North: North Slow Braised Dish Number 0")
     assert lines[3].startswith("PICKS · ")
     # South lost stations first, from its end; North kept every station.
-    north = lines[lines.index("NORTH") + 1 : lines.index("SOUTH") - 1]
+    north = lines[lines.index("NORTH FULL MENU") + 1 : lines.index("SOUTH FULL MENU") - 2]
     assert len(north) == STATIONS_PER_HALL
-    south = lines[lines.index("SOUTH") + 1 :]
+    south = lines[lines.index("SOUTH FULL MENU") + 1 :]
     assert south[-1].startswith("+") and south[-1].endswith(" stations")
-    assert south[-2].startswith("South Station ")
+    assert south[-2].startswith("• South Station ")
     removed = int(south[-1][1:].split()[0])
     assert len(south) - 1 + removed == STATIONS_PER_HALL
-    assert south[-2].startswith(f"South Station {STATIONS_PER_HALL - removed - 1:02d}:")
+    assert south[-2].startswith(f"• South Station {STATIONS_PER_HALL - removed - 1:02d}:")
 
 
 def test_trimming_moves_to_the_previous_hall_once_the_last_is_empty():
@@ -532,8 +579,9 @@ def test_trimming_moves_to_the_previous_hall_once_the_last_is_empty():
     lines = fit_to_budget([["North: a"]], [north, south], budget=1500)
 
     assert len(compose_body("\n".join(lines)).encode("utf-8")) <= 1500
-    assert lines[lines.index("SOUTH") + 1 :] == ["+20 stations"]
-    assert lines[lines.index("SOUTH") - 2].startswith("+")
+    # A trimmed hall keeps its header and the +N line.
+    assert lines[lines.index("SOUTH FULL MENU") + 1 :] == ["+20 stations"]
+    assert lines[lines.index("SOUTH FULL MENU") - 3].startswith("+")
     assert lines[0] == "North: a"
 
 

@@ -3,7 +3,7 @@ from datetime import date
 from menu import cli
 from menu.config import DiningHallConfig, PlatedConfig
 from menu.models import DayMenu
-from menu.notifier import DISCLAIMER
+from menu.notifier import DISCLAIMER, SEPARATOR
 from menu.users import parse_user
 
 MENU = DayMenu.model_validate(
@@ -51,8 +51,9 @@ def test_picks_follow_the_glance(monkeypatch):
         "PICKS · North · 40P 0C 5F · 300 cal",
         "Grilled Chicken · 40P · 300 cal",
         "",
-        "NORTH",
-        "Grill: Grilled Chicken",
+        SEPARATOR,
+        "NORTH FULL MENU",
+        "• Grill: Grilled Chicken",
     ]
 
 
@@ -62,7 +63,13 @@ def test_subscriber_without_macros_gets_the_plain_digest(monkeypatch):
 
     lines = cli._build_message(user, "dinner", date(2026, 9, 24))
 
-    assert lines == ["North: Grilled Chicken", "", "NORTH", "Grill: Grilled Chicken"]
+    assert lines == [
+        "North: Grilled Chicken",
+        "",
+        SEPARATOR,
+        "NORTH FULL MENU",
+        "• Grill: Grilled Chicken",
+    ]
 
 
 def test_no_published_menu_means_no_message(monkeypatch):
@@ -175,4 +182,4 @@ def test_notify_command_without_a_topic_prints_to_the_console(monkeypatch, capsy
     out = capsys.readouterr().out
     assert out.startswith("=== Dinner · ")
     assert "\ntags: plate_with_cutlery\n" in out
-    assert out.endswith(f"\n\n{DISCLAIMER}\n")
+    assert out.endswith(f"\n\n{SEPARATOR}\n{DISCLAIMER}\n")

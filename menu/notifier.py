@@ -15,11 +15,14 @@ from typing import Protocol
 import httpx
 
 DISCLAIMER = "Data may be incomplete; confirm allergens with staff."
+# Sets off each hall's full menu and the disclaimer. Box drawing is safe
+# in a proportional font as long as nothing has to line up with it.
+SEPARATOR = "─" * 10
 
 
 def compose_body(message: str) -> str:
     """The body exactly as sent: the message, then the disclaimer last."""
-    return f"{message}\n\n{DISCLAIMER}"
+    return f"{message}\n\n{SEPARATOR}\n{DISCLAIMER}"
 
 
 class Notifier(Protocol):

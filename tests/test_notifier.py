@@ -2,11 +2,11 @@ import httpx
 import pytest
 
 from menu import notifier
-from menu.notifier import DISCLAIMER, ConsoleNotifier, NtfyNotifier, compose_body
+from menu.notifier import DISCLAIMER, SEPARATOR, ConsoleNotifier, NtfyNotifier, compose_body
 
 
-def test_disclaimer_is_always_the_last_line():
-    assert compose_body("NORTH\nMezze: Quinoa").splitlines()[-1] == DISCLAIMER
+def test_disclaimer_is_always_the_last_line_under_a_separator():
+    assert compose_body("NORTH\nMezze: Quinoa").splitlines()[-3:] == ["", SEPARATOR, DISCLAIMER]
     assert DISCLAIMER == "Data may be incomplete; confirm allergens with staff."
 
 
@@ -21,13 +21,15 @@ def test_console_prints_title_headers_and_body(capsys):
         "=== Dinner · Thu Sep 24 ===\n"
         "tags: plate_with_cutlery · click: https://nd.nutrislice.com/menu/north-dining-hall/\n"
         "NORTH\nMezze: Quinoa\n\n"
-        f"{DISCLAIMER}\n"
+        f"{SEPARATOR}\n{DISCLAIMER}\n"
     )
 
 
 def test_console_without_headers_prints_no_header_line(capsys):
     ConsoleNotifier().send("Lunch · Mon Sep 21", "body")
-    assert capsys.readouterr().out == f"=== Lunch · Mon Sep 21 ===\nbody\n\n{DISCLAIMER}\n"
+    assert capsys.readouterr().out == (
+        f"=== Lunch · Mon Sep 21 ===\nbody\n\n{SEPARATOR}\n{DISCLAIMER}\n"
+    )
 
 
 def test_ntfy_sends_title_tags_and_click(monkeypatch):

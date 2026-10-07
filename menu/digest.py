@@ -29,28 +29,24 @@ import re
 from dataclasses import dataclass, field
 from datetime import date
 
+from menu.allergens import has_known_allergen_data
 from menu.macros import nutrient_value
 from menu.models import DayMenu, MenuItem
-from menu.notifier import compose_body
+from menu.notifier import SEPARATOR, compose_body
 from menu.planner import MealPlan, PlannedItem, plan_meal
 from menu.users import MacrosConfig, PicksConfig, UserConfig
 
 _WHITESPACE = re.compile(r"\s+")
 _LEADING_ARTICLE = re.compile(r"^the\s+")
 
-# Nutrislice mixes dietary labels into the same tag list as allergens,
-# with identical metadata (see AllergenTag in menu/models.py). These are
-# not allergen information. It is deliberately a list of known
-# NON-allergens rather than of allergens: a tag name nobody anticipated
-# counts as allergen data instead of being silently ignored.
-_DIETARY_LABELS = frozenset({"vegan", "vegetarian", "high performance"})
-
-# Serving units that name a whole dish, so the item is a main whatever
-# its protein ("1 taco" at 3g). Units seen in real menus and left out on
-# purpose: slice (a pineapple garnish is "1 Slice"), pizza (bulk rows),
-# bowl ("z bowl" is unclear), tender, bun, egg roll, potsticker, naan,
-# link, and portion ("4 oz portion" is a weight, used for slaws and sides
-# too). Plurals ("2 tacos") match as well.
+# Serving units that name a whole dish or a per-piece main, so the item
+# is a main whatever its protein ("1 taco" at 3g, "1 potsticker" at 3g).
+# Units seen in real menus and left out on purpose: slice (a pineapple
+# garnish is "1 Slice"), pizza (bulk rows), bowl ("z bowl" is unclear),
+# tender, naan, link, portion ("4 oz portion" is a weight, used for
+# slaws and sides too), and a bare roll (dinner rolls and oatmeal bread
+# are "1 roll"; egg and spring rolls are listed instead). Plurals
+# ("2 tacos") match as well.
 DISH_WORDS = (
     "taco",
     "burrito",
@@ -73,6 +69,14 @@ DISH_WORDS = (
     "wing",
     "shank",
     "wrap",
+    "bun",
+    "potsticker",
+    "pot sticker",
+    "egg roll",
+    "spring roll",
+    "dumpling",
+    "spanakopita",
+    "casserole dish",
 )
 _DISH_UNIT = re.compile(
     r"\b(?:" + "|".join(map(re.escape, DISH_WORDS)) + r")(?:e?s)?\b", re.IGNORECASE
@@ -236,26 +240,17 @@ def station_mains(station: Station, rule: MainsRule) -> list[MenuItem]:
     return sorted(mains, key=_by_protein)
 
 
-def _fallback(station: Station) -> MenuItem | None:
-    """The single highest-protein item, or the first item if none reports protein."""
-    items = station.unique_items
-    with_protein = [item for item in items if _protein(item) is not None]
-    if with_protein:
-        return min(with_protein, key=_by_protein)
-    return items[0] if items else None
-
-
 def station_lineup(station: Station, rule: MainsRule) -> list[str]:
-    """Names to show for a station: its mains, or else one fallback item.
+    """Names to show for a station: its mains, or else its items by protein.
 
     A station is never left out just because nothing in it looks like a
     main (a build-your-own pasta bar), since the subscriber asked for it.
+    The fallback skips nothing: bulk rows and items under the floor are
+    listed, highest protein first, ties and items without a protein
+    value in menu order.
     """
-    mains = station_mains(station, rule)
-    if mains:
-        return [_name(item) for item in mains[: rule.max_items]]
-    fallback = _fallback(station)
-    return [_name(fallback)] if fallback else []
+    items = station_mains(station, rule) or sorted(station.unique_items, key=_by_protein)
+    return [_name(item) for item in items[: rule.max_items]]
 
 
 def glance_line(label: str, stations: list[Station], rule: MainsRule) -> str | None:
@@ -273,7 +268,7 @@ def glance_line(label: str, stations: list[Station], rule: MainsRule) -> str | N
 
 def station_lines(stations: list[Station], rule: MainsRule) -> list[str]:
     return [
-        f"{station.name}: {', '.join(names)}"
+        f"• {station.name}: {', '.join(names)}"
         for station in stations
         if (names := station_lineup(station, rule))
     ]
@@ -295,16 +290,6 @@ def _times(value: float | None, servings: int) -> float | None:
     return value * servings if value is not None else None
 
 
-def _allergens_unknown(item: MenuItem) -> bool:
-    """True unless Nutrislice reported a tag that isn't a dietary label.
-
-    An item tagged only "High Performance" has no allergen information
-    at all. Absence of a tag never means safe.
-    """
-    tags = item.food.allergens if item.food else []
-    return not any(tag.name.strip().lower() not in _DIETARY_LABELS for tag in tags)
-
-
 def _pick_line(planned: PlannedItem, flag_unknown: bool) -> str:
     """ "2× Garden Herb Grilled Chicken · 42P · 178 cal", for all servings.
 
@@ -316,7 +301,7 @@ def _pick_line(planned: PlannedItem, flag_unknown: bool) -> str:
     protein = _amount(_times(planned.per_serving["protein"], n), "P")
     calories = _amount(_times(planned.per_serving["calories"], n), " cal")
     line = f"{count}{_name(planned.item)} · {protein} · {calories}"
-    if flag_unknown and _allergens_unknown(planned.item):
+    if flag_unknown and not has_known_allergen_data(planned.item):
         line += " · allergens unknown"
     return line
 
@@ -423,7 +408,8 @@ def _render(head: list[list[str]], sections: list[HallSection], dropped: list[in
     halls = []
     for section, removed in zip(sections, dropped, strict=True):
         more = [f"+{removed} station{'s' if removed != 1 else ''}"] if removed else []
-        halls.append([section.label.upper(), *section.lines, *more])
+        header = f"{section.label.upper()} FULL MENU"
+        halls.append([SEPARATOR, header, *section.lines, *more])
     return join_blocks([*head, *halls])
 
 
