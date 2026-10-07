@@ -142,7 +142,7 @@ def test_row_round_trips_through_parse_user():
     assert parse_user(user_to_row(user), "test") == user
 
 
-def test_row_from_before_the_main_protein_column_gets_the_default():
+def test_parse_user_defaults_main_protein_g_when_the_key_is_missing():
     row = {key: value for key, value in ROW.items() if key != "main_protein_g"}
     assert parse_user(row, "test").main_protein_g == 10
 
