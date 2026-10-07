@@ -9,7 +9,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from menu import client, menus_store, supabase_users
+from menu import client, invite, menus_store, supabase_users
 from menu.allergens import UnknownAllergenPolicy
 from menu.config import PlatedConfig, load_config
 from menu.digest import (
@@ -296,6 +296,18 @@ def cmd_subscribers_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_subscribers_invite(args: argparse.Namespace) -> int:
+    """Invite someone to the web app. Their topic is never printed."""
+    url, key = supabase_users.credentials_from_env()
+    site_url = invite.site_url_from_env()
+    result = invite.invite_subscriber(
+        url, key, email=args.email, name=args.name, site_url=site_url, link=args.link
+    )
+    row = f"linked to subscriber {result.name}" if result.linked else f"added {result.name}"
+    print(f"invited {args.email}: {row} (auth user {result.user_id})")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="menu", description="ND dining hall menu tool")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -345,6 +357,18 @@ def build_parser() -> argparse.ArgumentParser:
     push.set_defaults(func=cmd_subscribers_push)
     lst = subs_sub.add_parser("list", help="List active subscribers (topics hidden)")
     lst.set_defaults(func=cmd_subscribers_list)
+    inv = subs_sub.add_parser(
+        "invite",
+        help="Invite someone to the web app (needs PLATED_SITE_URL too)",
+    )
+    inv.add_argument("email")
+    inv.add_argument("--name", required=True, help="Their subscriber name")
+    inv.add_argument(
+        "--link",
+        metavar="EXISTING_NAME",
+        help="Attach the account to this existing subscriber instead of adding one",
+    )
+    inv.set_defaults(func=cmd_subscribers_invite)
 
     return parser
 
