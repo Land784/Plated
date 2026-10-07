@@ -11,11 +11,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MEALS, MEAL_LABEL, dayInfo, type Meal } from "@/lib/plated/constants";
 import { sameSettings } from "@/lib/plated/form";
-import { displayTitle, fallbackTitle } from "@/lib/plated/preview";
+import { displayTitle, fallbackTitle, friendlyReason } from "@/lib/plated/preview";
 import { dayKeyOf, isIsoDate } from "@/lib/plated/time";
 
 export default function PreviewPage() {
-  const { draft, saved, catalog, previewChoice, setPreviewChoice } = useApp();
+  const { draft, saved, catalog, previewChoice, setPreviewChoice, previewRange } = useApp();
   const { meal, date } = previewChoice;
   const { result, error, busy } = usePreview(previewChoice);
 
@@ -48,10 +48,13 @@ export default function PreviewPage() {
             id="pvDate"
             type="date"
             value={date}
+            min={previewRange.min}
+            max={previewRange.max}
             onChange={(e) => {
               if (e.target.value) setPreviewChoice({ meal, date: e.target.value });
             }}
           />
+          <p className="text-xs text-muted-foreground">Menus are kept for this week: today through Saturday.</p>
         </div>
       </CardSection>
       <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -84,7 +87,7 @@ export default function PreviewPage() {
           <div className="rounded-xl border border-dashed p-6 text-center">
             <div className="text-sm font-medium">{fallbackTitle(meal, date)}</div>
             <p className="mt-2 text-sm text-muted-foreground">
-              {error ?? (result && !result.sent ? noSendReason(result.reason) : "Loading the preview…")}
+              {error ?? (result && !result.sent ? friendlyReason(result.reason) : "Loading the preview…")}
             </p>
           </div>
         )}
@@ -93,9 +96,3 @@ export default function PreviewPage() {
   );
 }
 
-/** The function's terse reasons, in plain words. */
-function noSendReason(reason: string): string {
-  if (reason === "no menu published")
-    return "No menu is published for this meal and date yet, or none of your stations serve it, so nothing would be sent.";
-  return reason;
-}

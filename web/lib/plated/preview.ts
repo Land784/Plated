@@ -14,7 +14,7 @@ import {
 import { formToUpdate, type FormState } from "./form";
 import { nextScheduled } from "./schedule";
 import type { CatalogStation } from "./stations";
-import { dayKeyOf, fmtTitleDate, isIsoDate, type ZonedNow } from "./time";
+import { dayKeyOf, fmtTitleDate, isIsoDate, weekEndOf, type ZonedNow } from "./time";
 
 export const PREVIEW_ENDPOINT = "/api/preview";
 
@@ -82,10 +82,27 @@ export function servedReason(meal: Meal, date: string): string | null {
   return null;
 }
 
-/** Default meal and date: the next scheduled text, else today's dinner. */
+/**
+ * Dates the preview can show: menus are stored for the current
+ * Sunday-to-Saturday week only, so today through the coming Saturday.
+ */
+export function previewDateRange(now: ZonedNow): { min: string; max: string } {
+  return { min: now.date, max: weekEndOf(now.date) };
+}
+
+/** Default meal and date: the next scheduled text within the stored week, else today's dinner. */
 export function defaultPreviewChoice(form: FormState, now: ZonedNow): { meal: Meal; date: string } {
   const next = nextScheduled(form.days, now);
-  return next ? { meal: next.meal, date: next.date } : { meal: "dinner", date: now.date };
+  const { max } = previewDateRange(now);
+  return next && next.date <= max ? { meal: next.meal, date: next.date } : { meal: "dinner", date: now.date };
+}
+
+export const NO_MENU_REASON = "no menu published";
+
+/** The function's terse reasons, in plain words. */
+export function friendlyReason(reason: string): string {
+  if (reason === NO_MENU_REASON) return "Nothing stored yet for that day; menus appear the morning of.";
+  return reason;
 }
 
 export function isPreviewable(meal: string, date: string): meal is Meal {

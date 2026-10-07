@@ -13,7 +13,7 @@ import { CardSection } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { STEPS, STEP_NAME, stepValid, type StepKey } from "@/lib/plated/form";
+import { NAME_MAX, STEPS, STEP_NAME, cleanName, stepValid, type StepKey } from "@/lib/plated/form";
 
 export default function SettingsPage() {
   const { draft, setDraft, resetDraft, catalog, row, save } = useApp();
@@ -61,9 +61,9 @@ export default function SettingsPage() {
             disabled={!stepValid(draft, catalog, editing) || saving}
             onClick={async () => {
               setSaving(true);
-              const ok = await save(draft, "Saved");
+              const result = await save(draft, "Saved");
               setSaving(false);
-              if (ok) {
+              if (result === "ok") {
                 setFlashCard(editing);
                 close();
               }
@@ -85,17 +85,20 @@ function Summary({ flashCard, onEdit }: { flashCard: StepKey | null; onEdit: (k:
   const lines = useSummary(saved);
   const paused = !saved.active;
   const [name, setName] = useState(saved.name);
+  const [nameError, setNameError] = useState("");
 
   const togglePause = () =>
     save({ ...saved, active: paused }, paused ? "Saved. Texts are back on." : "Saved. Texts paused.");
 
-  const saveName = () => {
-    const trimmed = name.trim();
-    if (!trimmed) {
-      setName(saved.name);
+  const saveName = async () => {
+    const clean = cleanName(name);
+    setName(clean || saved.name);
+    if (!clean || clean === saved.name) {
+      setNameError("");
       return;
     }
-    if (trimmed !== saved.name) void save({ ...saved, name: trimmed });
+    const result = await save({ ...saved, name: clean });
+    setNameError(result === "name-taken" ? "That name is taken" : "");
   };
 
   return (
@@ -145,12 +148,21 @@ function Summary({ flashCard, onEdit }: { flashCard: StepKey | null; onEdit: (k:
             id="name"
             value={name}
             autoComplete="nickname"
-            onChange={(e) => setName(e.target.value)}
+            maxLength={NAME_MAX}
+            aria-invalid={nameError ? true : undefined}
+            aria-describedby="nameErr"
+            onChange={(e) => {
+              setName(e.target.value);
+              setNameError("");
+            }}
             onBlur={saveName}
             onKeyDown={(e) => {
               if (e.key === "Enter") e.currentTarget.blur();
             }}
           />
+          <p id="nameErr" className={`text-sm text-red-600 dark:text-red-400 ${nameError ? "" : "hidden"}`} aria-live="polite">
+            {nameError}
+          </p>
         </div>
         <div className="space-y-2">
           <div className="text-sm font-medium leading-none">Email</div>

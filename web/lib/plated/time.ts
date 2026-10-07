@@ -24,6 +24,16 @@ export function addDays(date: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** The Saturday that ends `date`'s Sunday-to-Saturday week (`date` itself on a Saturday). */
+export function weekEndOf(date: string): string {
+  return addDays(date, 6 - utcDate(date).getUTCDay());
+}
+
+/** Clamp an ISO date into [min, max] (string order is date order for YYYY-MM-DD). */
+export function clampDate(date: string, min: string, max: string): string {
+  return date < min ? min : date > max ? max : date;
+}
+
 /** "Thu Sep 24" */
 export function fmtTitleDate(date: string): string {
   return utcDate(date)

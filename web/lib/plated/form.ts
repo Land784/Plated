@@ -98,9 +98,16 @@ export function formFromRow(row: SubscriberRow, catalog: CatalogStation[]): Form
   };
 }
 
+/** `subscribers.name` is unique and at most 60 characters. */
+export const NAME_MAX = 60;
+
+export function cleanName(name: string): string {
+  return name.trim().slice(0, NAME_MAX).trim();
+}
+
 export function formToUpdate(form: FormState, catalog: CatalogStation[]): SubscriberUpdate {
   return {
-    name: form.name.trim(),
+    name: cleanName(form.name),
     halls: hallsToRow(form.hallChoice, form.first),
     stations: deriveStations(catalog, form.stations),
     favorites: deriveFavorites(catalog, form.stations),
