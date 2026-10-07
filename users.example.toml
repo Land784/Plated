@@ -25,7 +25,9 @@ ntfy_topic = "CHANGE-ME-to-something-unguessable"
 timezone = "America/New_York"
 
 # North and South share only about 28% of their items on a given day, so
-# both are included by default.
+# both are included by default. The first hall is your preferred one: it
+# leads the glance, its full menu comes first, and tapping the push opens
+# its Nutrislice page.
 halls = ["north-dining-hall", "south-dining-hall"]
 
 # How many mains each station line names, highest protein first. 3 keeps
@@ -34,8 +36,9 @@ max_items_per_station = 3
 
 # What counts as a "main" on a station line: an item with at least this
 # much protein per listed serving, or one whose serving unit names a dish
-# ("1 taco", "1 sandwich"). A station with no main shows its single
-# highest-protein item instead. Display only: this is not the planner's
+# or a per-piece main ("1 taco", "1 sandwich", "1 potsticker"). A station
+# with no main lists its items highest protein first instead, up to
+# max_items_per_station. Display only: this is not the planner's
 # [picks] min_item_protein_g and never changes what picks can choose.
 main_protein_g = 10
 
@@ -114,8 +117,9 @@ protein = { target = 70 }
 # like that is marked "allergens unknown".
 # exclude_allergens = ["Peanuts", "Shellfish"]
 #
-# Items with no allergen data when you exclude allergens: "flag" (show,
-# marked unknown) or "exclude" (drop them).
+# Items with no allergen data (no tags, or only labels such as "Vegan" or
+# "High Performance") when you exclude allergens: "flag" (show, marked
+# unknown) or "exclude" (drop them).
 # unknown_allergens = "flag"
 
 # When to send, per weekday, in your local time. Meal keys are Nutrislice

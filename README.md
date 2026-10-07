@@ -21,32 +21,36 @@ PICKS · both halls · 78P 12C 16F · 513 cal
 2× Garden Herb Grilled Chicken · 42P · 178 cal
 Pork Tenderloin Agrodolce · 36P · 335 cal
 
-NORTH
-Domer Diner: Cantina Sandwich, Smash Burger, Garden Herb Grilled Chicken
-La Mesa: Cochinita Pibil
-Mezze: Pork Tenderloin Agrodolce, Quinoa, Pork Osso Buco
-Crust & Co: Pepperoni Pizza
-Green & Grains: Southwest Salad
-Comfort Kitchen: Fried Catfish, Dirty Rice
-The Global Compass: Beef Pad See Ew
+──────────
+NORTH FULL MENU
+• Domer Diner: Cantina Sandwich, Smash Burger, Garden Herb Grilled Chicken
+• La Mesa: Cochinita Pibil
+• Mezze: Pork Tenderloin Agrodolce, Quinoa, Pork Osso Buco
+• Crust & Co: Pepperoni Pizza, Elote Pizza, Cheese Pizza
+• Green & Grains: Southwest Salad
+• Comfort Kitchen: Fried Catfish, Dirty Rice
+• The Global Compass: Beef Pad See Ew, Pork Potsticker
 
-SOUTH
-Domer Diner: Garden Herb Grilled Chicken, Smash Beef Patty, Black Bean Veggie Burger
-La Mesa: Tacos Al Pastor
-Mezze: Pork Tenderloin Agrodolce
-Crust & Co: Pepperoni & Cheese French Bread Pizza, Meatball Pizza, Pepperoni Pizza
-Comfort Kitchen: Mushroom Florentine Pork Chops, Beef Au Poivre
-Global Compass: Beef Pad See Ew
-Pastaria: Halal Chicken & Beef Pepperoni
-Pasta Stir Fry: Pasta Stir-Fry Station
+──────────
+SOUTH FULL MENU
+• Domer Diner: Garden Herb Grilled Chicken, Smash Beef Patty, Black Bean Veggie Burger
+• La Mesa: Tacos Al Pastor
+• Mezze: Pork Tenderloin Agrodolce
+• Crust & Co: Pepperoni & Cheese French Bread Pizza, Meatball Pizza, Pepperoni Pizza
+• Comfort Kitchen: Mushroom Florentine Pork Chops, Beef Au Poivre
+• Global Compass: Beef Pad See Ew
+• Pastaria: Halal Chicken & Beef Pepperoni, Elbow Macaroni, Penne Pasta
+• Pasta Stir Fry: Pasta Stir-Fry Station
 
+──────────
 Data may be incomplete; confirm allergens with staff.
 ```
 
 The push answers "what's good today", so the first lines carry it: a
 lock screen shows the title and two to four lines. Then come the
-[meal picks](#meal-picks), one line per station, and the disclaimer,
-which ends every push.
+[meal picks](#meal-picks), each hall's full menu (one bulleted line per
+station, set off by a `──────────` separator), and the disclaimer,
+which ends every push under its own separator.
 
 One meal serves 175 items across 40 stations, most of them condiments,
 drinks and toppings, so each subscriber declares an allowlist of the
@@ -55,14 +59,16 @@ station line names only its **mains**:
 
 - An item is a main if it reports at least `main_protein_g` of protein
   per listed serving (default 10), or its serving unit names a dish
-  (`1 taco`, `1 sandwich`, `6 oz portion`). Tacos Al Pastor has 3g per
-  taco but is still dinner.
+  or a per-piece main (`1 taco`, `1 sandwich`, `1 potsticker`, `1 egg
+  roll`). Tacos Al Pastor has 3g per taco but is still dinner. Weights
+  (`4 oz portion`) and a bare `1 roll` (dinner rolls) don't count.
 - Rows over the `[picks]` calorie ceiling are whole recipes (a 2473 cal
   "Cheese Pizza"), so they are skipped for display.
 - Mains are listed highest protein first, up to `max_items_per_station`
   per line; 3 is recommended.
 - A station with nothing qualifying, like a build-your-own pasta bar,
-  shows its single highest-protein item rather than disappearing.
+  lists its items highest protein first instead (up to the same cap,
+  bulk rows included) rather than disappearing.
 - The glance lines at the top are each hall's top 3 mains by protein,
   at most one per station.
 
@@ -74,8 +80,8 @@ push opens the first hall's Nutrislice page (`click`). The body is kept
 to 3,000 bytes: every iPhone push goes through ntfy's Firebase path,
 which caps the serialized message at 4,000 bytes and cuts the end off
 to fit. Over budget, station lines are dropped from the end and replaced
-with `+N stations`; the glance, picks and disclaimer are never cut. The
-sample above is about 1,100 bytes. There is no Markdown: Android renders
+with `+N stations` under the hall's header; the glance, picks and
+disclaimer are never cut. The sample above is about 1,300 bytes. There is no Markdown: Android renders
 it, but iOS shows the asterisks.
 
 ## Quick start
@@ -119,6 +125,10 @@ gitignored in this repo.
 
 Station matching ignores case and a leading "The", so `Global Compass`
 also matches North's spelling, `The Global Compass`.
+
+Your preferred hall is the first entry of `halls`: it leads the glance,
+its full menu comes first, and tapping the push opens its Nutrislice
+page.
 
 Meal keys are Nutrislice `menu_type` slugs. The confirmed set is
 `breakfast`, `lunch`, `late-lunch`, `dinner`, `brunch` and `special`.
@@ -198,8 +208,9 @@ in the optional `[picks]` table:
 The planner compares one serving exactly as listed (`4 z` and all),
 because nutrients are only comparable per listed serving. Tags that are
 dietary labels rather than allergens ("Vegan", "High Performance") are
-not allergen data, and an item with no allergen tags is unknown, never
-safe.
+not allergen data, so an item tagged only with them is unknown exactly
+like an untagged one: never safe, and dropped under
+`unknown_allergens = "exclude"`.
 
 ## Subscribers in Supabase
 
