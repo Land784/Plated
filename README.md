@@ -1,43 +1,82 @@
 # Plated
 
 Pushes the Notre Dame dining hall menus to your phone, at the times you
-actually eat, filtered down to the stations you care about, led by a
-combo from each hall built for your own macro goals.
+actually eat, filtered down to the stations you care about, led by
+each hall's best mains and a combo built for your own macro goals.
 
 Menus come from Nutrislice's unofficial JSON API. Notifications go out
 over [ntfy.sh](https://ntfy.sh).
 
 ## What a notification looks like
 
-```
-Lunch - Mon Sep 21
+Real output for the 2026-09-24 dinner, a 70g protein target and 3 mains
+per station:
 
-NORTH DINING HALL
-Domer Diner
-  Smash Burger
-  Garden Herb Grilled Chicken
-  Hand Breaded Chicken Tenders
-La Mesa
-  Steak Pepito
-  Tortilla Chips
-The Global Compass
-  Butter Chicken
-
-SOUTH DINING HALL
-Crust & Co
-  Prosciutto Pizza
-  Cheese Pizza
-Athenian Rice Bowl
-  Mini Pita Chips
-  Jerusalem Garbanzo
-  +11 more
 ```
+Dinner · Thu Sep 24
+North: Cantina Sandwich, Southwest Salad, Pork Tenderloin Agrodolce
+South: Pork Tenderloin Agrodolce, Mushroom Florentine Pork Chops, Pepperoni & Cheese French Bread Pizza
+
+PICKS · both halls · 78P 12C 16F · 513 cal
+2× Garden Herb Grilled Chicken · 42P · 178 cal
+Pork Tenderloin Agrodolce · 36P · 335 cal
+
+NORTH
+Domer Diner: Cantina Sandwich, Smash Burger, Garden Herb Grilled Chicken
+La Mesa: Cochinita Pibil
+Mezze: Pork Tenderloin Agrodolce, Quinoa, Pork Osso Buco
+Crust & Co: Pepperoni Pizza
+Green & Grains: Southwest Salad
+Comfort Kitchen: Fried Catfish, Dirty Rice
+The Global Compass: Beef Pad See Ew
+
+SOUTH
+Domer Diner: Garden Herb Grilled Chicken, Smash Beef Patty, Black Bean Veggie Burger
+La Mesa: Tacos Al Pastor
+Mezze: Pork Tenderloin Agrodolce
+Crust & Co: Pepperoni & Cheese French Bread Pizza, Meatball Pizza, Pepperoni Pizza
+Comfort Kitchen: Mushroom Florentine Pork Chops, Beef Au Poivre
+Global Compass: Beef Pad See Ew
+Pastaria: Halal Chicken & Beef Pepperoni
+Pasta Stir Fry: Pasta Stir-Fry Station
+
+Data may be incomplete; confirm allergens with staff.
+```
+
+The push answers "what's good today", so the first lines carry it: a
+lock screen shows the title and two to four lines. Then come the
+[meal picks](#meal-picks), one line per station, and the disclaimer,
+which ends every push.
 
 One meal serves 175 items across 40 stations, most of them condiments,
 drinks and toppings, so each subscriber declares an allowlist of the
-stations they actually visit. Build-your-own stations list individual
-ingredients rather than dishes, so items are capped per station and the
-remainder collapses into `+N more`.
+stations they actually visit, and stations print in that order. Each
+station line names only its **mains**:
+
+- An item is a main if it reports at least `main_protein_g` of protein
+  per listed serving (default 10), or its serving unit names a dish
+  (`1 taco`, `1 sandwich`, `6 oz portion`). Tacos Al Pastor has 3g per
+  taco but is still dinner.
+- Rows over the `[picks]` calorie ceiling are whole recipes (a 2473 cal
+  "Cheese Pizza"), so they are skipped for display.
+- Mains are listed highest protein first, up to `max_items_per_station`
+  per line; 3 is recommended.
+- A station with nothing qualifying, like a build-your-own pasta bar,
+  shows its single highest-protein item rather than disappearing.
+- The glance lines at the top are each hall's top 3 mains by protein,
+  at most one per station.
+
+This is a display rule only. It never changes what the planner may pick
+or any reported value.
+
+ntfy puts a meal emoji before the title (the `tags`), and tapping the
+push opens the first hall's Nutrislice page (`click`). The body is kept
+to 3,000 bytes: every iPhone push goes through ntfy's Firebase path,
+which caps the serialized message at 4,000 bytes and cuts the end off
+to fit. Over budget, station lines are dropped from the end and replaced
+with `+N stations`; the glance, picks and disclaimer are never cut. The
+sample above is about 1,100 bytes. There is no Markdown: Android renders
+it, but iOS shows the asterisks.
 
 ## Quick start
 
@@ -69,7 +108,9 @@ cp users.example.toml users/wes.toml
 ```
 
 It documents the full format: ntfy topic, timezone, halls, station
-allowlist, per-station cap, and per-weekday send times.
+allowlist, mains per station (`max_items_per_station`), the mains
+protein floor (`main_protein_g`), macro goals, and per-weekday send
+times.
 
 The template lives *outside* `users/` on purpose. `dispatch` notifies
 every file in that directory, so a placeholder left sitting there would
@@ -84,10 +125,16 @@ Meal keys are Nutrislice `menu_type` slugs. The confirmed set is
 Only the weekdays you list get notifications, so omitting a meal is how
 you handle days a hall doesn't serve it. Sundays serve brunch, not lunch.
 
+Breakfast is served at its own stations: North's "Sunrise Kitchen" and
+"Bar, MYOO", South's "Breakfast" and "Omelets" (checked live
+2026-10-06). One allowlist covers every meal, so if you schedule
+breakfast, list those stations too; otherwise nothing is sent and the
+run fails as if no menu were published.
+
 ## Meal picks
 
-A subscriber with a `[macros]` table gets one combo per hall at the top
-of each notification, built for their own nutrient goals:
+A subscriber with a `[macros]` table gets one combo per hall, right
+after the glance lines, built for their own nutrient goals:
 
 ```toml
 [macros]
@@ -105,13 +152,23 @@ is any mix of `target`, `min` and `max`, and at least one target or min
 is required, since limits alone are met by eating nothing.
 
 ```
-PICKS: protein 60-80g
-North Dining Hall: 78P 12C 16F · 513 cal
-  2× Garden Herb Grilled Chicken
-     21P 0C 0F · 89 cal (1 tender) · allergens unknown
-  Pork Tenderloin Agrodolce
-     36P 12C 16F · 335 cal (6 oz portion) · Dairy, Fish, Soy
+PICKS · both halls · 78P 12C 16F · 513 cal
+2× Garden Herb Grilled Chicken · 42P · 178 cal
+Pork Tenderloin Agrodolce · 36P · 335 cal
 ```
+
+The header carries the combo's totals. Each line gives an item's
+protein and calories for all its servings (`2×` doubles the reported
+per-serving numbers; that is arithmetic, not an estimate). When both
+halls land on the same combo, it prints once as `both halls`; otherwise each hall gets its own
+`PICKS · North · ...` block. A combo that misses a goal ends with a
+line such as `closest: protein 57g (want 60-80g)`.
+
+Per-item carbs and fat, serving sizes and allergen names are not in the
+push, to keep it short. The one exception: if you set
+`exclude_allergens`, an item with no allergen data gets
+` · allergens unknown`, since you asked to avoid something it can't be
+checked for. The disclaimer covers everyone else.
 
 Items come only from the subscriber's stations, and each hall is
 planned on its own, since nobody eats at both in one meal. The planner
@@ -138,10 +195,11 @@ in the optional `[picks]` table:
   The serving unit can't tell them apart, so calories are the only
   signal. These rows are skipped, never corrected.
 
-Numbers are one serving exactly as listed (`4 z` and all), because
-nutrients are only comparable per listed serving. Tags that are dietary
-labels rather than allergens ("Vegan", "High Performance") are hidden,
-and an item with no allergen tags reads "allergens unknown", never safe.
+The planner compares one serving exactly as listed (`4 z` and all),
+because nutrients are only comparable per listed serving. Tags that are
+dietary labels rather than allergens ("Vegan", "High Performance") are
+not allergen data, and an item with no allergen tags is unknown, never
+safe.
 
 ## Subscribers in Supabase
 

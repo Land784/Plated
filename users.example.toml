@@ -28,13 +28,26 @@ timezone = "America/New_York"
 # both are included by default.
 halls = ["north-dining-hall", "south-dining-hall"]
 
-# Build-your-own stations list individual ingredients rather than dishes,
-# so each station is capped and the rest collapses into "+N more".
-max_items_per_station = 4
+# How many mains each station line names, highest protein first. 3 keeps
+# the push short enough to read on a phone.
+max_items_per_station = 3
 
-# Allowlist of stations you actually eat at. Matching ignores case and a
-# leading "The", so "Global Compass" also matches North's spelling,
-# "The Global Compass". Anything not listed here is never shown.
+# What counts as a "main" on a station line: an item with at least this
+# much protein per listed serving, or one whose serving unit names a dish
+# ("1 taco", "1 sandwich"). A station with no main shows its single
+# highest-protein item instead. Display only: this is not the planner's
+# [picks] min_item_protein_g and never changes what picks can choose.
+main_protein_g = 10
+
+# Allowlist of stations you actually eat at, in the order you want them
+# listed. Matching ignores case and a leading "The", so "Global Compass"
+# also matches North's spelling, "The Global Compass". Anything not
+# listed here is never shown.
+#
+# One list covers every meal, and breakfast is served at its own
+# stations: North's "Sunrise Kitchen" and "Bar, MYOO", South's
+# "Breakfast" and "Omelets" (checked 2026-10-06). If you schedule
+# breakfast, add them, or breakfast sends nothing.
 stations = [
   "Domer Diner",
   "La Mesa",
@@ -51,9 +64,10 @@ stations = [
   "Homestyle",
 ]
 
-# Optional: meal picks. With a [macros] table, each notification opens
-# with one combo per hall that meets your goals, drawn only from the
-# stations above. Delete the table to get the plain station digest.
+# Optional: meal picks. With a [macros] table, each notification shows
+# one combo per hall that meets your goals (once, if both halls pick the
+# same), drawn only from the stations above. Delete the table to get the
+# station digest alone.
 #
 # Each nutrient takes any mix of:
 #   target = 70     aim for this, within +/-15% (or set tolerance = 10)
@@ -63,9 +77,10 @@ stations = [
 # sodium (mg). At least one target or min is required, since limits
 # alone are met by eating nothing.
 #
-# Of all the combos that meet every goal, the one with the fewest
-# calories is picked. If none can, you get the closest one, labelled
-# with the goal it misses. Numbers are per serving exactly as Nutrislice
+# Of all the combos that meet every goal, the one supplying the most of
+# what you asked for per calorie is picked (fewest calories was tried and
+# always landed at the bottom of a target's range). If none can, you get
+# the closest one, labelled with the goal it misses. Numbers are per serving exactly as Nutrislice
 # lists them, and dining hall data can be incomplete or wrong.
 [macros]
 protein = { target = 70 }
@@ -95,7 +110,8 @@ protein = { target = 70 }
 # max_total_servings = 4
 #
 # Tag names to exclude, matched case-insensitively. An item with no
-# allergen tags is shown as "allergens unknown", never as safe.
+# allergen tags is never treated as safe; with exclusions set, a pick
+# like that is marked "allergens unknown".
 # exclude_allergens = ["Peanuts", "Shellfish"]
 #
 # Items with no allergen data when you exclude allergens: "flag" (show,
