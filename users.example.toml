@@ -26,8 +26,8 @@ timezone = "America/New_York"
 
 # North and South share only about 28% of their items on a given day, so
 # both are included by default. The first hall is your preferred one: it
-# leads the glance, its full menu comes first, and tapping the push opens
-# its Nutrislice page.
+# leads the glance, its full menu comes first, and the push's "Full menu:"
+# link points to its Nutrislice page.
 halls = ["north-dining-hall", "south-dining-hall"]
 
 # How many mains each station line names, highest protein first. 3 keeps

@@ -15,6 +15,7 @@ per station:
 ```
 Dinner · Thu Sep 24
 North: Cantina Sandwich, Southwest Salad, Pork Tenderloin Agrodolce
+
 South: Pork Tenderloin Agrodolce, Mushroom Florentine Pork Chops, Pepperoni & Cheese French Bread Pizza
 
 PICKS · both halls · 78P 12C 16F · 513 cal
@@ -43,14 +44,18 @@ SOUTH FULL MENU
 • Pasta Stir Fry: Pasta Stir-Fry Station
 
 ──────────
+Full menu: https://nd.nutrislice.com/menu/north-dining-hall/
 Data may be incomplete; confirm allergens with staff.
 ```
 
 The push answers "what's good today", so the first lines carry it: a
 lock screen shows the title and two to four lines. Then come the
 [meal picks](#meal-picks), each hall's full menu (one bulleted line per
-station, set off by a `──────────` separator), and the disclaimer,
-which ends every push under its own separator.
+station, set off by a `──────────` separator), and a footer under the
+last separator: a plain-text link to your preferred hall's Nutrislice
+page, which the phone makes tappable, and the disclaimer, which ends
+every push. Each glance line is its own paragraph, so the second hall
+isn't buried under the first line's wrap.
 
 One meal serves 175 items across 40 stations, most of them condiments,
 drinks and toppings, so each subscriber declares an allowlist of the
@@ -75,14 +80,14 @@ station line names only its **mains**:
 This is a display rule only. It never changes what the planner may pick
 or any reported value.
 
-ntfy puts a meal emoji before the title (the `tags`), and tapping the
-push opens the first hall's Nutrislice page (`click`). The body is kept
+ntfy puts a meal emoji before the title (the `tags`). Tapping the push
+itself opens nothing; the menu link is in the body. The body is kept
 to 3,000 bytes: every iPhone push goes through ntfy's Firebase path,
 which caps the serialized message at 4,000 bytes and cuts the end off
 to fit. Over budget, station lines are dropped from the end and replaced
-with `+N stations` under the hall's header; the glance, picks and
-disclaimer are never cut. The sample above is about 1,300 bytes. There is no Markdown: Android renders
-it, but iOS shows the asterisks.
+with `+N stations` under the hall's header; the glance, picks, link and
+disclaimer are never cut. The sample above is about 1,400 bytes. There
+is no Markdown: Android renders it, but iOS shows the asterisks.
 
 ## Quick start
 
@@ -127,8 +132,8 @@ Station matching ignores case and a leading "The", so `Global Compass`
 also matches North's spelling, `The Global Compass`.
 
 Your preferred hall is the first entry of `halls`: it leads the glance,
-its full menu comes first, and tapping the push opens its Nutrislice
-page.
+its full menu comes first, and the push's "Full menu:" link points to
+its Nutrislice page.
 
 Meal keys are Nutrislice `menu_type` slugs. The confirmed set is
 `breakfast`, `lunch`, `late-lunch`, `dinner`, `brunch` and `special`.
