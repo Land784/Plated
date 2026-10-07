@@ -156,16 +156,16 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
     sends (menu/menus_store.py).
     """
     credentials = supabase_users.credentials_from_env() if args.supabase else None
-    users = (
-        supabase_users.load_users_from_supabase(*credentials)
-        if credentials
-        else load_users(Path(args.users))
-    )
+    problems: list[str] = []
+    if credentials:
+        users, bad_rows = supabase_users.load_users_from_supabase(*credentials)
+        problems.extend(f"skipped subscriber {problem}" for problem in bad_rows)
+    else:
+        users = load_users(Path(args.users))
     now_utc = _resolve_now(args.now, args.tz)
     claiming = credentials is not None and not args.dry_run
 
     sent = 0
-    problems: list[str] = []
 
     for user in users:
         for due in due_meals(user, now_utc, args.window):
@@ -281,7 +281,7 @@ def cmd_subscribers_push(args: argparse.Namespace) -> int:
 def cmd_subscribers_list(args: argparse.Namespace) -> int:
     """List active Supabase subscribers. Topics are never printed."""
     url, key = supabase_users.credentials_from_env()
-    users = supabase_users.load_users_from_supabase(url, key)
+    users, bad_rows = supabase_users.load_users_from_supabase(url, key)
     for user in users:
         meals = sum(len(m) for m in user.schedule.values())
         goals = (
@@ -293,7 +293,9 @@ def cmd_subscribers_list(args: argparse.Namespace) -> int:
             goals += f" (+ overrides for {', '.join(user.macros.meals)})"
         print(f"{user.name}: {len(user.stations)} stations, {meals} scheduled meals/week, {goals}")
     print(f"{len(users)} active subscriber(s)", file=sys.stderr)
-    return 0
+    for problem in bad_rows:
+        print(f"invalid subscriber {problem}", file=sys.stderr)
+    return 1 if bad_rows else 0
 
 
 def cmd_subscribers_invite(args: argparse.Namespace) -> int:

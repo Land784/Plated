@@ -22,7 +22,7 @@ from datetime import date
 import httpx
 
 from menu.macros import Goal
-from menu.users import MacrosConfig, UserConfig, parse_user
+from menu.users import MacrosConfig, UserConfig, UserConfigError, parse_user
 
 URL_ENV = "SUPABASE_URL"
 KEY_ENV = "SUPABASE_SECRET_KEY"
@@ -107,16 +107,38 @@ def fetch_subscriber_rows(url: str, key: str, *, client: httpx.Client | None = N
     return rows
 
 
+def _row_label(row: object) -> str:
+    if isinstance(row, dict):
+        for key in ("name", "id"):
+            value = row.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return "?"
+
+
 def load_users_from_supabase(
     url: str, key: str, *, client: httpx.Client | None = None
-) -> list[UserConfig]:
-    """Load and validate every active subscriber.
+) -> tuple[list[UserConfig], list[str]]:
+    """Load and validate every active subscriber, each row on its own.
 
-    Strict like :func:`menu.users.load_users`: one bad row fails the load
-    rather than silently dropping a subscriber.
+    Returns the valid subscribers and one problem per invalid row
+    ("<name or id>: <error>"). A row that a signed-in user saved in a bad
+    shape must not stop everyone else's notifications, but it must not
+    pass silently either: callers report the problems and fail the run.
     """
-    rows = fetch_subscriber_rows(url, key, client=client)
-    return [parse_user(row, source=f"supabase:{row.get('name', '?')}") for row in rows]
+    users: list[UserConfig] = []
+    problems: list[str] = []
+    for row in fetch_subscriber_rows(url, key, client=client):
+        label = _row_label(row)
+        try:
+            if not isinstance(row, dict):
+                raise UserConfigError(f"{label}: expected an object")
+            users.append(parse_user(row, source=label))
+        except UserConfigError as exc:
+            problems.append(str(exc))  # already starts with the label
+        except (ValueError, TypeError) as exc:  # e.g. int() of a non-number
+            problems.append(f"{label}: {exc}")
+    return users, problems
 
 
 def _goal_to_json(goal: Goal) -> dict:

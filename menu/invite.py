@@ -26,7 +26,7 @@ from menu.supabase_users import (
     api_headers,
     raise_for_status,
 )
-from menu.users import DEFAULT_HALLS, WEEKDAYS
+from menu.users import DEFAULT_HALLS, DEFAULT_MAX_ITEMS, WEEKDAYS
 
 SITE_URL_ENV = "PLATED_SITE_URL"
 STATIONS_VIEW = "stations"
@@ -69,6 +69,8 @@ def new_subscriber_row(name: str, user_id: str, stations: list[str]) -> dict:
         "halls": list(DEFAULT_HALLS),
         "stations": list(stations),
         "favorites": [],
+        # Explicit, so a row never depends on the column default.
+        "max_items_per_station": DEFAULT_MAX_ITEMS,
         "schedule": DEFAULT_SCHEDULE,
         "macros": None,
     }

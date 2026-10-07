@@ -45,9 +45,10 @@ def test_rows_load_through_the_same_validation_as_files():
         seen.append(request)
         return httpx.Response(200, json=[ROW])
 
-    users = load_users_from_supabase(URL, SECRET, client=_client(handler))
+    users, problems = load_users_from_supabase(URL, SECRET, client=_client(handler))
 
     assert users == [parse_user(ROW, "test")]
+    assert problems == []
     request = seen[0]
     assert request.url.path == "/rest/v1/subscribers"
     assert request.url.params["active"] == "is.true"
@@ -80,12 +81,37 @@ def test_http_error_raises_instead_of_returning_no_subscribers():
         load_users_from_supabase(URL, SECRET, client=_client(handler))
 
 
-def test_one_bad_row_fails_the_whole_load():
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=[ROW, {**ROW, "ntfy_topic": ""}])
+def test_a_bad_row_is_reported_and_the_others_still_load():
+    rows = [
+        {**ROW, "name": "mallory", "halls": []},
+        ROW,
+        {**ROW, "name": "", "id": "9f2e", "max_items_per_station": "lots"},
+        {**ROW, "name": "trent", "schedule": {"funday": {"lunch": "11:00"}}},
+    ]
 
-    with pytest.raises(UserConfigError, match="ntfy_topic"):
-        load_users_from_supabase(URL, SECRET, client=_client(handler))
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=rows)
+
+    users, problems = load_users_from_supabase(URL, SECRET, client=_client(handler))
+
+    assert [u.name for u in users] == ["Wes"]
+    assert problems == [
+        "mallory: 'halls' must be a non-empty list",
+        "9f2e: 'name' is required",
+        "trent: unknown weekday 'funday'; expected one of monday, tuesday, wednesday, "
+        "thursday, friday, saturday, sunday",
+    ]
+
+
+def test_a_non_number_is_reported_with_the_row_label():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{**ROW, "max_items_per_station": "lots"}])
+
+    users, problems = load_users_from_supabase(URL, SECRET, client=_client(handler))
+
+    assert users == []
+    assert len(problems) == 1
+    assert problems[0].startswith("Wes: ")
 
 
 def test_invalid_file_is_rejected_before_any_request():
@@ -166,7 +192,7 @@ def test_row_id_is_kept_but_never_written():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=[{**ROW, "id": "3f1c"}])
 
-    [user] = load_users_from_supabase(URL, SECRET, client=_client(handler))
+    [user], _ = load_users_from_supabase(URL, SECRET, client=_client(handler))
 
     assert user.id == "3f1c"
     assert "id" not in user_to_row(user)

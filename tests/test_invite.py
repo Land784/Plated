@@ -63,6 +63,7 @@ def test_default_row_matches_the_web_apps_first_run_defaults():
     assert row["favorites"] == []
     assert row["user_id"] == USER_ID
     assert row["macros"] is None
+    assert row["max_items_per_station"] == 3
     for day in ("monday", "tuesday", "wednesday", "thursday", "friday"):
         assert row["schedule"][day] == {"lunch": "12:00", "dinner": "17:30"}
     for day in ("saturday", "sunday"):
