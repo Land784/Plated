@@ -10,6 +10,12 @@
 # the name can both read your notifications and publish fake ones to your
 # phone, so treat it like a password and generate something unguessable.
 #
+# Subscribers invited to the web app (`menu subscribers invite`) edit
+# their settings there, and the database generates their topic. Once a
+# row is linked to a web account, `menu subscribers push` refuses to
+# overwrite it with a file unless you pass --force, which undoes whatever
+# they last saved.
+#
 # Generate one with the command below. Do NOT use secrets.token_urlsafe:
 # ntfy topics are case-sensitive and get typed into a phone by hand, and
 # that alphabet mixes case and includes 0/O and 1/l/I, which people
@@ -30,7 +36,8 @@ timezone = "America/New_York"
 # link points to its Nutrislice page.
 halls = ["north-dining-hall", "south-dining-hall"]
 
-# How many mains each station line names, highest protein first. 3 keeps
+# How many mains each station line names, highest protein first. The
+# default is 3, the same as the database and the web app, which keeps
 # the push short enough to read on a phone.
 max_items_per_station = 3
 
@@ -46,6 +53,11 @@ main_protein_g = 10
 # listed. Matching ignores case and a leading "The", so "Global Compass"
 # also matches North's spelling, "The Global Compass". Anything not
 # listed here is never shown.
+#
+# Otherwise names must match Nutrislice's published spelling exactly:
+# the halls publish "Homestyle 2" (checked 2026-10-07), and "Homestyle"
+# would never match it. The Supabase `stations` view lists every name as
+# published.
 #
 # One list covers every meal, and breakfast is served at its own
 # stations: North's "Sunrise Kitchen" and "Bar, MYOO", South's
@@ -64,8 +76,13 @@ stations = [
   "Harvest Bowl",
   "Pastaria",
   "Pasta Stir Fry",
-  "Homestyle",
+  "Homestyle 2",
 ]
+
+# Optional: stations starred in the web app, which shows them first.
+# This list reorders nothing by itself; the push follows `stations`, so
+# put your favorites first there too (the web app does that on save).
+# favorites = ["Domer Diner", "La Mesa"]
 
 # Optional: meal picks. With a [macros] table, each notification shows
 # one combo per hall that meets your goals (once, if both halls pick the

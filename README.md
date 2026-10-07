@@ -5,7 +5,8 @@ actually eat, filtered down to the stations you care about, led by
 each hall's best mains and a combo built for your own macro goals.
 
 Menus come from Nutrislice's unofficial JSON API. Notifications go out
-over [ntfy.sh](https://ntfy.sh).
+over [ntfy.sh](https://ntfy.sh). Invited subscribers set up and edit
+their own notifications in a small [web app](#web-app).
 
 ## What a notification looks like
 
@@ -70,7 +71,7 @@ station line names only its **mains**:
 - Rows over the `[picks]` calorie ceiling are whole recipes (a 2473 cal
   "Cheese Pizza"), so they are skipped for display.
 - Mains are listed highest protein first, up to `max_items_per_station`
-  per line; 3 is recommended.
+  per line (default 3, in files, the database and the web app alike).
 - A station with nothing qualifying, like a build-your-own pasta bar,
   lists its items highest protein first instead (up to the same cap,
   bulk rows included) rather than disappearing.
@@ -119,8 +120,9 @@ cp users.example.toml users/wes.toml
 ```
 
 It documents the full format: ntfy topic, timezone, halls, station
-allowlist, mains per station (`max_items_per_station`), the mains
-protein floor (`main_protein_g`), macro goals, and per-weekday send
+allowlist, starred stations (`favorites`), mains per station
+(`max_items_per_station`, default 3), the mains protein floor
+(`main_protein_g`, default 10g), macro goals, and per-weekday send
 times.
 
 The template lives *outside* `users/` on purpose. `dispatch` notifies
@@ -129,7 +131,16 @@ push real notifications to a guessable public topic. `users/` itself is
 gitignored in this repo.
 
 Station matching ignores case and a leading "The", so `Global Compass`
-also matches North's spelling, `The Global Compass`.
+also matches North's spelling, `The Global Compass`. Nothing else is
+forgiven, so a name must be spelled the way Nutrislice publishes it:
+the halls publish one station as "Homestyle 2", and an allowlist entry
+of "Homestyle" never matches it. The `stations` view (see
+[Stored menus](#stored-menus)) lists every name exactly as published.
+
+`favorites` is the web app's list of starred stations. On its own it
+reorders nothing: the push follows `stations`, and the web app writes
+the favorites at the front of that list when it saves. In a file, list
+your favorites first in `stations` too.
 
 Your preferred hall is the first entry of `halls`: it leads the glance,
 its full menu comes first, and the push's "Full menu:" link points to
@@ -220,14 +231,16 @@ like an untagged one: never safe, and dropped under
 ## Subscribers in Supabase
 
 In production, subscribers live in a Supabase table rather than files,
-so onboarding someone doesn't mean committing to a repo, and a future
-signup form has somewhere to write. The schema is in
-`supabase/migrations/`; its columns are the subscriber-file keys, and
-rows go through the same validation as a TOML file.
+so onboarding someone doesn't mean committing to a repo, and the web
+app has somewhere to write. The schema is in `supabase/migrations/`;
+its columns are the subscriber-file keys, and rows go through the same
+validation as a TOML file.
 
-`ntfy_topic` works like a password, so the table has row level security
-on and no policies: only the secret key can read it. Keep that key in
-`.env` locally (gitignored) and in the runner repo's secrets.
+`ntfy_topic` works like a password. The table has row level security
+on, and its only policies let a signed-in web user read and update
+their own row ([Web app](#web-app)); anonymous callers have no access
+at all. The runner and the commands below use the secret key. Keep that
+key in `.env` locally (gitignored) and in the runner repo's secrets.
 
 ```bash
 # .env: SUPABASE_URL=https://<ref>.supabase.co, SUPABASE_SECRET_KEY=sb_secret_...
@@ -246,22 +259,171 @@ Pushing writes every column from the validated file, so a key deleted
 from the file is cleared in the database too. `dispatch --users` still
 works for local testing.
 
-## Deployment: two repos
+A row linked to a web account (its `user_id` is set) belongs to that
+person, who edits it in the app, so `push` refuses to overwrite it and
+says which row it is. `--force` pushes anyway, undoing whatever they
+last saved.
 
-This repo is public and holds code only. A **separate private repo**
-holds real subscriber files and runs the cron.
+Each row is validated on its own. Now that people can save their own
+rows, a bad one is possible despite the database's checks, so it is
+skipped and reported rather than allowed to stop everyone else's
+notifications, and the run then exits non-zero so GitHub emails the
+owner. `subscribers list` reports bad rows the same way.
+
+## Web app
+
+`web/` is an invite-only site where a subscriber sets up and edits
+their own notifications without a TOML file: where they eat, when, and
+which stations (cards showing dishes each one served recently, with a
+star for favorites), plus a pause switch, a live preview of their own
+push for any meal this week, and ntfy phone setup with a "send a test"
+button. There is no public sign-up and no macros section (picks are off
+for everyone until the planner is rebuilt); admin stays in the CLI.
+It's Next.js, Tailwind and shadcn/ui; [web/README.md](web/README.md)
+covers its routes, local dev, and the Supabase dashboard settings it
+needs.
+
+The browser talks to Supabase directly, with the publishable key and
+the person's session. Row level security and column grants let a
+signed-in user select and update only their own `subscribers` row, and
+update only `name`, `halls`, `stations`, `favorites`, `schedule` and
+`active`. They can read `ntfy_topic` (the Connect page shows it) but
+not change it: the database generates it, so nobody can point their row
+at someone else's phone. Only `subscribers invite` creates rows. Check
+constraints reject a malformed schedule, an unknown hall, a blank or
+over-long name, and a duplicate name: `name` is unique and works as a
+username.
+
+### The preview
+
+The preview has to match the real push exactly, so the renderer is
+never ported to TypeScript. `web/api/preview.py` is a Vercel Python
+function that installs this package from `main`
+(`web/api/requirements.txt`) and calls the same functions `dispatch`
+does (`menu/preview.py`). One renderer, at the cost of a preview that
+lags `main` by one Vercel deploy.
+
+`POST /api/preview` takes the unsaved form (halls, stations in order, a
+meal and a date), reads that day's stored menus with the publishable
+key, and answers with the push's title, tags, body and byte count, or
+`{"sent": false, "reason": ...}` when there's nothing to send. It needs
+no secret and no sign-in, and allows 30 requests a minute per IP per
+function instance.
+
+### Stored menus
+
+The web app never calls Nutrislice; only the notify job does. So
+`dispatch --supabase` also copies menus into Supabase, after the sends,
+so a slow Nutrislice can never delay a notification:
+
+- On the first real run after 05:00 Eastern each day (dry runs never
+  store), it fetches the whole week containing today for both halls and
+  every meal type that serves food: breakfast, brunch, lunch,
+  late-lunch, dinner. Nutrislice's endpoint returns a week per request,
+  so that's 10 requests a day, cached by the week's Sunday, and the
+  preview can show the rest of the week.
+- `menus` gets one row per (date, hall, meal): the day's items trimmed
+  to the fields the models read, in menu order, values as reported
+  (nulls, bulk rows and duplicates kept). About 25 KB a row instead of
+  100 KB.
+- `menu_stations` gets one row per station in each menu, with whether
+  it's a food station (`NON_FOOD_STATIONS` in `menu/digest.py`) and the
+  mains the push would list for it. The mains rule is Python, so it
+  runs here and SQL only counts.
+- `stations` is a view over the last 14 days of `menu_stations`, one
+  row per station with spellings merged ("The Global Compass" and
+  "Global Compass"): its most common published name, halls, meals, last
+  seen, whether it's food, and its three most frequent mains as example
+  dishes. It is the web app's station catalog.
+- Rows older than 60 days are deleted in the same step.
+- `menu_store_runs` is the success marker: one row per Eastern date
+  whose store had no problems. A store with any problem records none,
+  so the next run retries; the problem is reported and the run exits
+  non-zero, but sends are never affected.
+
+Menus are public information, so the three tables and the view are
+readable by anyone; only the secret key writes them. To fill them by
+hand, for example before the first invite:
+
+```bash
+uv run --env-file .env python -m menu menus store              # this week
+uv run --env-file .env python -m menu menus store --date 2026-10-12
+```
+
+### Inviting someone
+
+Public signups are off in Supabase, so an invite is the only way in:
+
+```bash
+# .env also needs PLATED_SITE_URL=https://<the Vercel site>
+uv run --env-file .env python -m menu subscribers invite friend@nd.edu --name jdoe
+
+# Give a subscriber who predates the web app an account for their row
+uv run --env-file .env python -m menu subscribers invite wes@nd.edu --name wschmidt --link wschmidt
+```
+
+It checks what it can before anything is created (the name is free, or
+with `--link` the named row exists and has no account yet; the station
+catalog isn't empty), then creates the auth user with Supabase's admin
+invite, which emails a sign-in link, and inserts their row with the web
+app's defaults: both halls, North first; every food station in the
+app's catalog order; lunch 12:00 and dinner 17:30 on weekdays, brunch
+11:00 and dinner 17:30 at weekends; 3 mains per station; no picks. The
+database generates the topic, and the command never prints it.
+
+`--link` attaches the account to the existing row and changes nothing
+else in it. From then on that person edits it on the web, and
+`subscribers push` refuses to overwrite it. If the row can't be saved
+after the invite has gone out, the command says which auth user to
+delete before trying again.
+
+### Rolling out schema changes
+
+Merging to `main` is deploying: the runner installs from it, and so
+does the preview on Vercel's next build. So a migration is applied to
+the live database **before** the code that needs it is merged, never
+after; each file in `supabase/migrations/` says in its header what it
+must precede. Additive migrations are safe to apply early because the
+code on `main` doesn't name the new columns yet.
+
+## Deployment: three parts
+
+This repo is public and holds code only, the web app included. A
+**separate private repo** holds the Supabase secrets and runs the cron.
+**Vercel** builds and hosts the web app and its preview function from
+this repo's `web/` directory.
 
 An ntfy topic is open pub/sub: anyone who knows the name can both read a
 subscriber's notifications and publish fake ones to their phone. Topics
 therefore never appear in this repo.
 
 ```
-Plated (public, this repo)        plated-runner (private)
-  menu/                             .github/workflows/notify.yml
-  users.example.toml                secrets: SUPABASE_URL,
-  supabase/migrations/                       SUPABASE_SECRET_KEY
+Plated (public, this repo)          plated-runner (private)          Vercel (root: web/)
+  menu/                               .github/workflows/notify.yml     the Next.js app
+  web/  (app + api/preview.py)        installs Plated from main         api/preview.py, installs
+  users.example.toml                                                    Plated from main
+  supabase/migrations/
   tests/
 ```
+
+| Part | Environment |
+|---|---|
+| Plated, on your machine | `.env`: `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, and `PLATED_SITE_URL` for `subscribers invite` |
+| plated-runner | repo secrets `SUPABASE_URL`, `SUPABASE_SECRET_KEY` |
+| Vercel | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (Next.js), `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` (the preview function) |
+
+**Never put the secret key on Vercel.** Everything there is public by
+design: `NEXT_PUBLIC_` values ship to every browser, and the preview
+only reads public menus. What a signed-in person may do comes from
+their session and row level security, not from a key.
+
+Vercel project settings: Root Directory `web`, Framework Preset
+Next.js, Node.js 20 or newer (`web/package.json` asks for 20.9+), and
+the four variables above for Production and Preview. Vercel turns the
+Python file in `web/api/` into a function with no extra configuration.
+Its git-URL install of this package is unproven until the first deploy;
+`web/api/requirements.txt` has the tarball URL to switch to if Vercel
+rejects it.
 
 The private repo installs this package straight from `main`, so changes
 here reach subscribers on the next run with no release step. The
@@ -269,7 +431,9 @@ dependency points private -> public, and public repos are readable
 anonymously, so no access token is needed in either direction.
 
 Do not copy `menu/` into the private repo. It holds config and a
-workflow, nothing else.
+workflow, nothing else. The web app needed no runner change: storing
+menus is a step inside the same `dispatch --supabase` run, with the
+same two secrets.
 
 The private repo's workflow:
 
@@ -350,9 +514,11 @@ live API.
 
 ## Not yet built
 
-Menu history, watchlist alerts, and a signup frontend. History belongs
-in Supabase too: GitHub Actions runners start with an empty disk every
-run, so the SQLite history in `menu/db.py` could never persist there.
+Watchlist alerts, a public menu page, macros and account deletion in
+the web app, and menu history beyond 60 days. History belongs in
+Supabase (the `menus` table is its start): GitHub Actions runners start
+with an empty disk every run, so the SQLite history in `menu/db.py`
+could never persist there.
 
 ## Roadmap
 
@@ -362,4 +528,4 @@ run, so the SQLite history in `menu/db.py` could never persist there.
 4. Meal planner
 5. ntfy notifications and a GitHub Actions daily run
 6. SQLite history and simple stats (e.g., which days have the best high-protein options)
-7. (Stretch) multi-user subscriptions via a Discord bot or small web UI
+7. Multi-user subscriptions: Supabase subscribers and the invite-only web app (done)

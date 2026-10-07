@@ -50,19 +50,44 @@ No secret key is used anywhere in `web/`.
 
 ## Vercel
 
-- Root Directory: `web`
+- Import the Plated repo; Root Directory: `web`
 - Framework Preset: Next.js (install `npm install`, build `npm run build`)
+- Node.js Version: 20.x or newer (`engines` asks for 20.9+)
 - Environment variables: the four above, for Production and Preview.
+  Never the secret key.
+- `api/preview.py` becomes a Python function (3.12 by default) with no
+  extra configuration. It installs `plated` from GitHub `main`
+  (`api/requirements.txt`), so a Python change reaches the preview on
+  the next Vercel deploy after it is merged. The git-URL install is
+  unproven until the first deploy; the tarball URL in that file is the
+  fallback.
 
 ## Supabase Auth settings (dashboard)
 
-- Public signups off; Site URL = the Vercel URL; add `<site>/auth/confirm`
-  to the redirect allow list.
-- Email templates must link to `/auth/confirm` with a token hash (not the
-  default `{{ .ConfirmationURL }}`), and include `{{ .Token }}` for the
-  code entry on the sign-in page:
+None of these are in migrations; set them by hand before the first
+invite.
+
+- **Sign-ups:** turn off "Allow new users to sign up". The sign-in page
+  also asks with `shouldCreateUser: false`, but only the dashboard
+  setting enforces it. `menu subscribers invite` is the only way in.
+- **URLs:** Site URL = the Vercel URL. Redirect allow list: that URL
+  (the invite command's `redirect_to`, from `PLATED_SITE_URL`, which
+  must be the same URL) and `<site>/auth/confirm` (the sign-in link's
+  redirect).
+- **Email templates** must link to `/auth/confirm` with a token hash
+  (not the default `{{ .ConfirmationURL }}`, which uses a flow the app
+  doesn't handle), and include `{{ .Token }}`, the 6-digit code, because
+  mail link scanners can use up a link before the person taps it:
   - Magic link: `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=email`
   - Invite: `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=invite`
+
+  The sign-in page's code box verifies with `type: "email"`, which is
+  right for magic-link codes. Whether it accepts the code from an
+  invite email is untested; check that with the first invite.
+- **SMTP:** Supabase's built-in sender only reaches the project's team
+  members, at 2 emails an hour. Set custom SMTP (the owner's Gmail with
+  an app password, `smtp.gmail.com`, about 500 a day) before inviting
+  anyone else.
 
 ## Preview function (owned by the backend)
 
