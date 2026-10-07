@@ -5,6 +5,16 @@ from menu import notifier
 from menu.notifier import DISCLAIMER, SEPARATOR, ConsoleNotifier, NtfyNotifier, compose_body
 
 
+def test_link_and_disclaimer_both_sit_under_the_last_separator():
+    body = compose_body("NORTH\nMezze: Quinoa", "https://example.test/")
+    assert body.splitlines()[-4:] == [
+        "",
+        SEPARATOR,
+        "Full menu: https://example.test/",
+        DISCLAIMER,
+    ]
+
+
 def test_disclaimer_is_always_the_last_line_under_a_separator():
     assert compose_body("NORTH\nMezze: Quinoa").splitlines()[-3:] == ["", SEPARATOR, DISCLAIMER]
     assert DISCLAIMER == "Data may be incomplete; confirm allergens with staff."
@@ -15,13 +25,15 @@ def test_console_prints_title_headers_and_body(capsys):
         "Dinner · Thu Sep 24",
         "NORTH\nMezze: Quinoa",
         tags=["plate_with_cutlery"],
-        click="https://nd.nutrislice.com/menu/north-dining-hall/",
+        link="https://nd.nutrislice.com/menu/north-dining-hall/",
     )
     assert capsys.readouterr().out == (
         "=== Dinner · Thu Sep 24 ===\n"
-        "tags: plate_with_cutlery · click: https://nd.nutrislice.com/menu/north-dining-hall/\n"
+        "tags: plate_with_cutlery\n"
         "NORTH\nMezze: Quinoa\n\n"
-        f"{SEPARATOR}\n{DISCLAIMER}\n"
+        f"{SEPARATOR}\n"
+        "Full menu: https://nd.nutrislice.com/menu/north-dining-hall/\n"
+        f"{DISCLAIMER}\n"
     )
 
 
@@ -32,7 +44,7 @@ def test_console_without_headers_prints_no_header_line(capsys):
     )
 
 
-def test_ntfy_sends_title_tags_and_click(monkeypatch):
+def test_ntfy_sends_title_and_tags_and_puts_the_link_in_the_body(monkeypatch):
     seen: list[httpx.Request] = []
 
     def post(url, *, timeout, **kwargs):
@@ -45,7 +57,7 @@ def test_ntfy_sends_title_tags_and_click(monkeypatch):
         "Dinner · Thu Sep 24",
         "NORTH\nMezze: Quinoa",
         tags=["plate_with_cutlery"],
-        click="https://nd.nutrislice.com/menu/north-dining-hall/",
+        link="https://nd.nutrislice.com/menu/north-dining-hall/",
     )
 
     [request] = seen
@@ -54,8 +66,11 @@ def test_ntfy_sends_title_tags_and_click(monkeypatch):
     # ASCII), so every ntfy parameter travels as a query parameter.
     assert request.url.params["title"] == "Dinner · Thu Sep 24"
     assert request.url.params["tags"] == "plate_with_cutlery"
-    assert request.url.params["click"] == "https://nd.nutrislice.com/menu/north-dining-hall/"
-    assert request.content.decode("utf-8") == compose_body("NORTH\nMezze: Quinoa")
+    # Tapping the push must not open a page; the link is plain text.
+    assert "click" not in request.url.params
+    assert request.content.decode("utf-8") == compose_body(
+        "NORTH\nMezze: Quinoa", "https://nd.nutrislice.com/menu/north-dining-hall/"
+    )
 
 
 def test_ntfy_omits_parameters_that_are_not_given(monkeypatch):

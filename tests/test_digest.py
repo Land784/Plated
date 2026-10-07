@@ -12,6 +12,7 @@ from menu.digest import (
     build_picks_blocks,
     filter_stations,
     fit_to_budget,
+    full_menu_link,
     glance_line,
     group_by_station,
     hall_label,
@@ -459,6 +460,7 @@ def _user(**overrides):
 def test_real_dinner_message():
     assert build_message(_user(), MENUS, "dinner") == [
         "North: Cantina Sandwich, Southwest Salad, Pork Tenderloin Agrodolce",
+        "",
         "South: Pork Tenderloin Agrodolce, Mushroom Florentine Pork Chops, "
         "Pepperoni & Cheese French Bread Pizza",
         "",
@@ -491,19 +493,28 @@ def test_real_dinner_message():
 
 def test_without_picks_the_glance_runs_straight_into_the_first_hall():
     lines = build_message(_user(macros=None), MENUS, "dinner")
-    assert lines[2:5] == ["", SEPARATOR, "NORTH FULL MENU"]
+    assert lines[0].startswith("North: ")
+    assert lines[1:5] == ["", lines[2], "", SEPARATOR]
+    assert lines[2].startswith("South: ")
+    assert lines[5] == "NORTH FULL MENU"
 
 
-def test_the_disclaimer_gets_its_own_separator():
-    body = compose_body("\n".join(build_message(_user(), MENUS, "dinner")))
-    assert body.endswith(f"\n\n{SEPARATOR}\nData may be incomplete; confirm allergens with staff.")
+def test_the_footer_links_the_preferred_hall_under_its_own_separator():
+    user = _user(halls=["south-dining-hall", "north-dining-hall"])
+    assert full_menu_link(user) == "https://nd.nutrislice.com/menu/south-dining-hall/"
+    body = compose_body("\n".join(build_message(user, MENUS, "dinner")), full_menu_link(user))
+    assert body.endswith(
+        f"\n\n{SEPARATOR}\n"
+        "Full menu: https://nd.nutrislice.com/menu/south-dining-hall/\n"
+        "Data may be incomplete; confirm allergens with staff."
+    )
     assert SEPARATOR == "\u2500" * 10
 
 
 def test_subscriber_without_macros_gets_no_picks():
     lines = build_message(_user(macros=None), MENUS, "dinner")
     assert not any(line.startswith("PICKS") for line in lines)
-    assert lines[4] == "NORTH FULL MENU"
+    assert lines[5] == "NORTH FULL MENU"
 
 
 def test_hall_order_follows_the_subscriber():
@@ -527,7 +538,8 @@ def test_no_station_content_means_no_message():
 
 
 def test_real_message_is_well_inside_the_budget():
-    body = compose_body("\n".join(build_message(_user(), MENUS, "dinner")))
+    user = _user()
+    body = compose_body("\n".join(build_message(user, MENUS, "dinner")), full_menu_link(user))
     assert len(body.encode("utf-8")) <= BODY_BUDGET_BYTES
 
 
@@ -556,12 +568,13 @@ def test_oversize_message_drops_station_lines_from_the_end():
     ]
     user = _user(stations=stations)
     lines = build_message(user, menus, "dinner")
-    body = compose_body("\n".join(lines))
+    body = compose_body("\n".join(lines), full_menu_link(user))
 
     assert len(body.encode("utf-8")) <= BODY_BUDGET_BYTES
     # Glance and picks are untouched.
     assert lines[0].startswith("North: North Slow Braised Dish Number 0")
-    assert lines[3].startswith("PICKS · ")
+    assert lines[2].startswith("South: South Slow Braised Dish Number 0")
+    assert lines[4].startswith("PICKS · ")
     # South lost stations first, from its end; North kept every station.
     north = lines[lines.index("NORTH FULL MENU") + 1 : lines.index("SOUTH FULL MENU") - 2]
     assert len(north) == STATIONS_PER_HALL
@@ -576,9 +589,11 @@ def test_oversize_message_drops_station_lines_from_the_end():
 def test_trimming_moves_to_the_previous_hall_once_the_last_is_empty():
     north = HallSection("North", [f"Station {i}: " + "x" * 80 for i in range(20)])
     south = HallSection("South", [f"Station {i}: " + "y" * 80 for i in range(20)])
-    lines = fit_to_budget([["North: a"]], [north, south], budget=1500)
+    link = "https://nd.nutrislice.com/menu/north-dining-hall/"
+    lines = fit_to_budget([["North: a"]], [north, south], budget=1500, link=link)
 
-    assert len(compose_body("\n".join(lines)).encode("utf-8")) <= 1500
+    # The budget counts the link line, which is never trimmed.
+    assert len(compose_body("\n".join(lines), link).encode("utf-8")) <= 1500
     # A trimmed hall keeps its header and the +N line.
     assert lines[lines.index("SOUTH FULL MENU") + 1 :] == ["+20 stations"]
     assert lines[lines.index("SOUTH FULL MENU") - 3].startswith("+")

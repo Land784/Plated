@@ -2,7 +2,8 @@
 
 The push answers "what's good today": a glance line per hall naming its
 best mains, then the macro picks (for subscribers with ``[macros]``),
-then one line per station. It is plain text, because iOS shows Markdown
+then one line per station, then a link to the preferred hall's full
+menu and the disclaimer. It is plain text, because iOS shows Markdown
 raw, and it is read in a proportional font on a ~40-character-wide
 phone, so there is no column alignment.
 
@@ -414,20 +415,24 @@ def _render(head: list[list[str]], sections: list[HallSection], dropped: list[in
 
 
 def fit_to_budget(
-    head: list[list[str]], sections: list[HallSection], budget: int = BODY_BUDGET_BYTES
+    head: list[list[str]],
+    sections: list[HallSection],
+    budget: int = BODY_BUDGET_BYTES,
+    link: str | None = None,
 ) -> list[str]:
     """Join the message, dropping station lines from the end until it fits.
 
-    The size checked is the body as sent, disclaimer included. The last
-    hall's last station goes first; each hall's removed lines become one
-    "+N stations" line. ``head`` (the glance and picks) is never cut.
+    The size checked is the body as sent, footer (``link`` and the
+    disclaimer) included. The last hall's last station goes first; each
+    hall's removed lines become one "+N stations" line. ``head`` (the
+    glance and picks) and the footer are never cut.
     """
     kept = [list(section.lines) for section in sections]
     dropped = [0] * len(sections)
     while True:
         trimmed = [HallSection(s.label, lines) for s, lines in zip(sections, kept, strict=True)]
         lines = _render(head, trimmed, dropped)
-        if len(compose_body("\n".join(lines)).encode("utf-8")) <= budget:
+        if len(compose_body("\n".join(lines), link).encode("utf-8")) <= budget:
             return lines
         last = next((i for i in reversed(range(len(kept))) if kept[i]), None)
         if last is None:
@@ -443,6 +448,11 @@ def hall_label(slug: str) -> str:
 
 def hall_page_url(slug: str) -> str:
     return HALL_PAGE_URL.format(slug=slug)
+
+
+def full_menu_link(user: UserConfig) -> str:
+    """The preferred (first) hall's Nutrislice page, for the footer."""
+    return hall_page_url(user.halls[0])
 
 
 def notification_title(meal: str, day: date) -> str:
@@ -466,6 +476,7 @@ def build_message(
     ``menus`` maps each of ``user.halls`` to its menu (None if
     unpublished). Picks alone never make a message: they come from the
     same stations, so no station lines means no menu was published.
+    The budget assumes the body is sent with ``full_menu_link(user)``.
     """
     rule = MainsRule(
         min_protein_g=user.main_protein_g,
@@ -491,4 +502,7 @@ def build_message(
     if user.macros is not None:
         halls = [(hall_label(slug), menus.get(slug)) for slug in user.halls]
         picks = build_picks_blocks(halls, user.stations, user.macros, user.picks, meal)
-    return fit_to_budget([glance, *picks], sections, budget)
+    # Each glance line is its own paragraph, so the second hall's line
+    # isn't lost under the first one's wrap.
+    head = [*([line] for line in glance), *picks]
+    return fit_to_budget(head, sections, budget, link=full_menu_link(user))

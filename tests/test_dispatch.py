@@ -121,7 +121,7 @@ def test_a_claimed_meal_is_sent_once(monkeypatch):
         {
             "title": "Lunch · Fri Sep 25",
             "tags": ["sandwich"],
-            "click": "https://nd.nutrislice.com/menu/north-dining-hall/",
+            "link": "https://nd.nutrislice.com/menu/north-dining-hall/",
         }
     ]
 

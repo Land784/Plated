@@ -15,14 +15,20 @@ from typing import Protocol
 import httpx
 
 DISCLAIMER = "Data may be incomplete; confirm allergens with staff."
-# Sets off each hall's full menu and the disclaimer. Box drawing is safe
-# in a proportional font as long as nothing has to line up with it.
+# Sets off each hall's full menu and the footer. Box drawing is safe in
+# a proportional font as long as nothing has to line up with it.
 SEPARATOR = "─" * 10
 
 
-def compose_body(message: str) -> str:
-    """The body exactly as sent: the message, then the disclaimer last."""
-    return f"{message}\n\n{SEPARATOR}\n{DISCLAIMER}"
+def compose_body(message: str, link: str | None = None) -> str:
+    """The body exactly as sent: the message, then the footer.
+
+    The footer sits under a separator: an optional "Full menu: <url>"
+    line, then the disclaimer, always last. The URL is plain text so the
+    phone makes it tappable; tapping the push itself opens nothing.
+    """
+    footer = [SEPARATOR, *([f"Full menu: {link}"] if link else []), DISCLAIMER]
+    return f"{message}\n\n" + "\n".join(footer)
 
 
 class Notifier(Protocol):
@@ -32,7 +38,7 @@ class Notifier(Protocol):
         message: str,
         *,
         tags: list[str] | None = None,
-        click: str | None = None,
+        link: str | None = None,
     ) -> None: ...
 
 
@@ -49,22 +55,21 @@ class NtfyNotifier:
         message: str,
         *,
         tags: list[str] | None = None,
-        click: str | None = None,
+        link: str | None = None,
     ) -> None:
         if not self.topic:
             raise ValueError("No ntfy topic configured (set NTFY_TOPIC or config.toml)")
         # ntfy reads every header from a query parameter of the same name
         # too. Titles contain "·", and httpx only sends ASCII headers, so
         # the query string (UTF-8, percent-encoded) is the one that works.
+        # No "click": the owner doesn't want a tap to open a page.
         params = {"title": title}
         if tags:
             params["tags"] = ",".join(tags)
-        if click:
-            params["click"] = click
         response = httpx.post(
             f"{self.base_url}/{self.topic}",
             params=params,
-            content=compose_body(message).encode("utf-8"),
+            content=compose_body(message, link).encode("utf-8"),
             timeout=10.0,
         )
         # Not raise_for_status(): its message includes the URL, and so the
@@ -82,12 +87,9 @@ class ConsoleNotifier:
         message: str,
         *,
         tags: list[str] | None = None,
-        click: str | None = None,
+        link: str | None = None,
     ) -> None:
         print(f"=== {title} ===")
-        headers = [f"tags: {','.join(tags)}"] if tags else []
-        if click:
-            headers.append(f"click: {click}")
-        if headers:
-            print(" · ".join(headers))
-        print(compose_body(message))
+        if tags:
+            print(f"tags: {','.join(tags)}")
+        print(compose_body(message, link))

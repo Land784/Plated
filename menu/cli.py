@@ -15,7 +15,7 @@ from menu.config import PlatedConfig, load_config
 from menu.digest import (
     build_message,
     build_picks_blocks,
-    hall_page_url,
+    full_menu_link,
     join_blocks,
     meal_tags,
     notification_title,
@@ -197,7 +197,7 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
                     title=notification_title(due.meal, due.local_date),
                     message="\n".join(sections),
                     tags=meal_tags(due.meal),
-                    click=hall_page_url(user.halls[0]),
+                    link=full_menu_link(user),
                 )
                 sent += 1
             except Exception as exc:  # noqa: BLE001
