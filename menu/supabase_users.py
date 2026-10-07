@@ -192,7 +192,13 @@ def user_to_row(user: UserConfig) -> dict:
 
 
 def upsert_subscriber(
-    url: str, key: str, data: dict, *, source: str, client: httpx.Client | None = None
+    url: str,
+    key: str,
+    data: dict,
+    *,
+    source: str,
+    force: bool = False,
+    client: httpx.Client | None = None,
 ) -> UserConfig:
     """Validate ``data`` like a subscriber file, then insert or update it.
 
@@ -200,11 +206,30 @@ def upsert_subscriber(
     updates that person rather than duplicating them. Every column is
     written from the validated config, defaults included, so a key
     deleted from the file is cleared in the row rather than left stale.
+
+    A row linked to a web account (user_id set) is edited in the app, so
+    it is refused unless ``force``: a push would silently undo the
+    person's own changes.
     """
     user = parse_user(data, source=source)
     row = user_to_row(user)
     http = client or httpx.Client(timeout=TIMEOUT)
     try:
+        if not force:
+            existing = http.get(
+                f"{url}/rest/v1/{TABLE}",
+                params={"select": "name,user_id", "ntfy_topic": f"eq.{user.ntfy_topic}"},
+                headers=api_headers(key),
+            )
+            raise_for_status(existing, f"checking {source}")
+            linked = [r for r in existing.json() if r.get("user_id")]
+            if linked:
+                # The message names the row, never the topic.
+                raise SupabaseError(
+                    f"{source}: subscriber {linked[0].get('name')!r} has a web account and "
+                    "edits their settings in the app; pushing would overwrite them. "
+                    "Use --force to push anyway."
+                )
         response = http.post(
             f"{url}/rest/v1/{TABLE}",
             params={"on_conflict": "ntfy_topic"},

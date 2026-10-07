@@ -274,7 +274,7 @@ def cmd_subscribers_push(args: argparse.Namespace) -> int:
         path = Path(raw_path)
         with path.open("rb") as handle:
             data = tomllib.load(handle)
-        user = supabase_users.upsert_subscriber(url, key, data, source=path.name)
+        user = supabase_users.upsert_subscriber(url, key, data, source=path.name, force=args.force)
         print(f"saved {user.name} ({path.name})")
     return 0
 
@@ -357,6 +357,11 @@ def build_parser() -> argparse.ArgumentParser:
     subs_sub = subs.add_subparsers(dest="subscribers_command", required=True)
     push = subs_sub.add_parser("push", help="Validate TOML files and upsert them")
     push.add_argument("files", nargs="+", help="Subscriber *.toml files")
+    push.add_argument(
+        "--force",
+        action="store_true",
+        help="Also overwrite subscribers who have a web account (they edit settings there)",
+    )
     push.set_defaults(func=cmd_subscribers_push)
     lst = subs_sub.add_parser("list", help="List active subscribers (topics hidden)")
     lst.set_defaults(func=cmd_subscribers_list)

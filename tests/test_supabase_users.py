@@ -127,13 +127,17 @@ def test_upsert_writes_every_column_matched_on_topic():
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
+        if request.method == "GET":
+            return httpx.Response(200, json=[{"name": "Wes", "user_id": None}])
         return httpx.Response(201)
 
     # No [macros] table, plus a key that is not a column.
     data = {"name": "Wes", "ntfy_topic": "topic-abc", "nickname": "W"}
     upsert_subscriber(URL, SECRET, data, source="wes.toml", client=_client(handler))
 
-    request = seen[0]
+    check, request = seen
+    assert check.url.params["ntfy_topic"] == "eq.topic-abc"
+    assert check.url.params["select"] == "name,user_id"
     assert request.method == "POST"
     assert request.url.params["on_conflict"] == "ntfy_topic"
     assert "resolution=merge-duplicates" in request.headers["prefer"]
@@ -262,3 +266,57 @@ def test_columns_the_web_app_adds_do_not_break_loading():
 def test_user_id_is_never_selected_or_written():
     assert "user_id" not in supabase_users.SELECT_COLUMNS
     assert "favorites" in supabase_users.COLUMNS
+
+
+def _push(handler, **kwargs):
+    data = {"name": "Wes", "ntfy_topic": "topic-abc"}
+    return upsert_subscriber(
+        URL, SECRET, data, source="wes.toml", client=_client(handler), **kwargs
+    )
+
+
+def test_push_refuses_to_overwrite_a_linked_account():
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=[{"name": "Wes", "user_id": "9a2b"}])
+
+    with pytest.raises(SupabaseError, match="web account") as info:
+        _push(handler)
+
+    assert "--force" in str(info.value)
+    assert "topic-abc" not in str(info.value)
+    assert [r.method for r in seen] == ["GET"]
+
+
+def test_force_pushes_over_a_linked_account_without_checking():
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(201)
+
+    _push(handler, force=True)
+
+    assert [r.method for r in seen] == ["POST"]
+
+
+def test_cli_push_passes_force(monkeypatch, tmp_path):
+    from menu import cli
+
+    path = tmp_path / "wes.toml"
+    path.write_text('name = "Wes"\nntfy_topic = "topic-abc"\n')
+    monkeypatch.setattr(cli.supabase_users, "credentials_from_env", lambda: (URL, SECRET))
+    seen = {}
+
+    def fake_upsert(url, key, data, *, source, force):
+        seen["force"] = force
+        return parse_user(data, source)
+
+    monkeypatch.setattr(cli.supabase_users, "upsert_subscriber", fake_upsert)
+
+    assert cli.main(["subscribers", "push", str(path)]) == 0
+    assert seen == {"force": False}
+    assert cli.main(["subscribers", "push", "--force", str(path)]) == 0
+    assert seen == {"force": True}
