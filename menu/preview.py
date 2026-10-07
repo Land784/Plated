@@ -16,6 +16,7 @@ has.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections import deque
 from collections.abc import Callable, Mapping
@@ -218,5 +219,8 @@ def handle_request(
     try:
         items = fetch_menu_items(url, key, req, client=client)
     except Exception:  # noqa: BLE001 - details stay server-side
+        # The response never carries the cause, but the function log does,
+        # so a misconfigured deployment can be diagnosed from Vercel's logs.
+        logging.getLogger(__name__).exception("preview: could not load menus from %s", url)
         return 502, {"error": "could not load menus"}
     return 200, render_preview(req, items)
