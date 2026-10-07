@@ -35,9 +35,9 @@ export default function SetupPage() {
       return;
     }
     setSaving(true);
-    const ok = await save(draft, null);
+    const result = await save(draft, null);
     setSaving(false);
-    if (ok) {
+    if (result === "ok") {
       setDone(true);
       scrollTop();
     }

@@ -20,6 +20,8 @@ active` (never `ntfy_topic`). RLS and column grants enforce this.
 
 ## Local dev
 
+Needs Node 20.9 or newer (`engines` in package.json; Next.js 16's minimum).
+
 ```bash
 cd web
 cp .env.example .env.local   # fill in the two NEXT_PUBLIC_ values
@@ -65,6 +67,13 @@ Python package, not here. The app calls `POST /api/preview` with
 `{"halls": [...], "stations": [...], "meal": "dinner", "date": "YYYY-MM-DD"}`,
 built from the unsaved form (`lib/plated/preview.ts`), debounced 350 ms. It
 answers `{title, tags, body, bytes, sent: true}` or `{sent: false, reason}`.
+Menus are stored for the current Sunday-to-Saturday week only, so the date
+picker runs from today (the subscriber's zone) to the coming Saturday, and
+"no menu published" reads "Nothing stored yet for that day; menus appear
+the morning of."
+
+Names are unique and at most 60 characters: the Name field trims and caps
+input, and a unique violation (23505) shows "That name is taken" by it.
 
 "Send a test" on Connect posts that body from the browser straight to
 `https://ntfy.sh/<topic>?title=...&tags=...` as plain text (a CORS simple

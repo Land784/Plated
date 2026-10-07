@@ -17,9 +17,9 @@ import {
   type FormState,
   type SubscriberRow,
 } from "@/lib/plated/form";
-import { defaultPreviewChoice } from "@/lib/plated/preview";
+import { defaultPreviewChoice, previewDateRange } from "@/lib/plated/preview";
 import { buildCatalog, type CatalogStation, type StationViewRow } from "@/lib/plated/stations";
-import { zonedNow } from "@/lib/plated/time";
+import { clampDate, zonedNow } from "@/lib/plated/time";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 import { BottomNav, Frame, Header } from "./frame";
@@ -38,12 +38,22 @@ type AppContext = {
   /** Throw away unsaved edits. */
   resetDraft: () => void;
   /** Write a form to the row; on success it becomes both `saved` and `draft`. */
-  save: (form: FormState, message?: string | null) => Promise<boolean>;
+  save: (form: FormState, message?: string | null) => Promise<SaveResult>;
   /** Hide the bottom nav (Setup steps, an open Settings edit). */
   setChromeHidden: (hidden: boolean) => void;
   previewChoice: PreviewChoice;
+  /** Sets the choice, clamping the date into `previewRange`. */
   setPreviewChoice: (c: PreviewChoice) => void;
+  previewRange: { min: string; max: string };
 };
+
+/** "name-taken": the unique(name) constraint refused the new name; the caller shows it by the field. */
+export type SaveResult = "ok" | "failed" | "name-taken";
+
+/** PostgreSQL 23505 unique_violation on the subscribers name constraint. */
+function isNameTaken(error: { code?: string; message?: string; details?: string }): boolean {
+  return error.code === "23505" && /name/i.test(`${error.message ?? ""} ${error.details ?? ""}`);
+}
 
 const Ctx = createContext<AppContext | null>(null);
 
@@ -143,15 +153,22 @@ function Ready({ loaded, onSignOut, children }: { loaded: Loaded; onSignOut: () 
   const [saved, setSaved] = useState(() => formFromRow(loaded.row, catalog));
   const [draft, setDraftState] = useState(saved);
   const [chromeHidden, setChromeHidden] = useState(false);
-  const [previewChoice, setPreviewChoice] = useState<PreviewChoice>(() =>
+  // Menus are stored for the current week only: today through Saturday, in the subscriber's zone.
+  const [previewRange] = useState(() => previewDateRange(zonedNow(loaded.row.timezone)));
+  const [previewChoice, setPreviewChoiceState] = useState<PreviewChoice>(() =>
     defaultPreviewChoice(saved, zonedNow(loaded.row.timezone)),
+  );
+  const setPreviewChoice = useCallback(
+    (c: PreviewChoice) =>
+      setPreviewChoiceState({ meal: c.meal, date: clampDate(c.date, previewRange.min, previewRange.max) }),
+    [previewRange],
   );
 
   const setDraft = useCallback((update: (f: FormState) => FormState) => setDraftState(update), []);
   const resetDraft = useCallback(() => setDraftState(saved), [saved]);
 
   const save = useCallback(
-    async (form: FormState, message: string | null = "Saved") => {
+    async (form: FormState, message: string | null = "Saved"): Promise<SaveResult> => {
       const update = formToUpdate(form, catalog);
       const { data, error } = await supabaseBrowser()
         .from("subscribers")
@@ -159,9 +176,10 @@ function Ready({ loaded, onSignOut, children }: { loaded: Loaded; onSignOut: () 
         .eq("id", row.id)
         .select(SUBSCRIBER_COLUMNS)
         .maybeSingle();
+      if (error && isNameTaken(error)) return "name-taken";
       if (error || !data) {
         toast.error("Couldn’t save. Check your connection and try again.");
-        return false;
+        return "failed";
       }
       const next = parseSubscriberRow(data) ?? applyUpdate(row, update);
       const nextForm = formFromRow(next, catalog);
@@ -169,7 +187,7 @@ function Ready({ loaded, onSignOut, children }: { loaded: Loaded; onSignOut: () 
       setSaved(nextForm);
       setDraftState(nextForm);
       if (message) toast.success(message);
-      return true;
+      return "ok";
     },
     [catalog, row],
   );
@@ -187,8 +205,9 @@ function Ready({ loaded, onSignOut, children }: { loaded: Loaded; onSignOut: () 
       setChromeHidden,
       previewChoice,
       setPreviewChoice,
+      previewRange,
     }),
-    [email, row, catalog, saved, draft, setDraft, resetDraft, save, previewChoice],
+    [email, row, catalog, saved, draft, setDraft, resetDraft, save, previewChoice, setPreviewChoice, previewRange],
   );
 
   return (
