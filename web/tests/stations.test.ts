@@ -6,6 +6,7 @@ import {
   buildCatalog,
   deriveFavorites,
   deriveStations,
+  isBowlsGroup,
   normalizeStation,
   selectionFromRow,
   toggleFavorite,
@@ -179,5 +180,44 @@ describe("row <-> form", () => {
     form = { ...form, hallChoice: "S", stations: { ...form.stations, off: ids(["Domer Diner", "Global Compass", "Mezze", "Brunch Grill", "Pastaria", "Omelets", "Waffle Bar"]) } };
     expect(stepValid(form, catalog, "what")).toBe(false);
     expect(stepValid({ ...form, hallChoice: "N" }, catalog, "what")).toBe(true);
+  });
+});
+
+describe("bowls group", () => {
+  it("normalizes every bowl-named station to one token, like the Python side", () => {
+    for (const name of ["Athenian Rice Bowl", "Jerusalem Rice Bowl", "Harvest Bowl", "The Harvest Bowl", "Bowls", "  BOWL bar "]) {
+      expect(normalizeStation(name)).toBe("bowls");
+    }
+    // Only the whole word counts.
+    expect(normalizeStation("Bowling Alley Grill")).toBe("bowling alley grill");
+    expect(normalizeStation("Superbowl Snacks")).toBe("superbowl snacks");
+  });
+
+  // The view returns one "Bowls" row; raw bowl spellings must still merge into it.
+  const bowlsCatalog = buildCatalog([
+    { station: "Bowls", halls: [S], meals: ["lunch", "dinner"], is_food: true, example_dishes: ["Athenian Rice Bowl", "Harvest Bowl"] },
+    { station: "Jerusalem Rice Bowl", halls: [S], meals: ["dinner"], is_food: true, example_dishes: ["Jerusalem Rice Bowl"] },
+    { station: "Pastaria", halls: [S], meals: ["dinner"], is_food: true, example_dishes: [] },
+  ]);
+
+  it("is one card labelled Bowls with the recent bowls as its dishes", () => {
+    expect(bowlsCatalog.filter((s) => isBowlsGroup(s))).toHaveLength(1);
+    const bowls = bowlsCatalog.find((s) => isBowlsGroup(s))!;
+    expect(bowls).toMatchObject({ id: "bowls", name: "Bowls", halls: ["S"] });
+    expect(bowls.dishes).toEqual(["Athenian Rice Bowl", "Harvest Bowl", "Jerusalem Rice Bowl"]);
+  });
+
+  it("maps an old row naming single bowls onto the group and writes it back as Bowls", () => {
+    const sel = selectionFromRow(["Harvest Bowl", "Athenian Rice Bowl"], ["Harvest Bowl"], bowlsCatalog);
+    expect(sel.off).toEqual(["pastaria"]);
+    expect(sel.favorites).toEqual(["bowls"]);
+    expect(sel.extra).toEqual([]);
+    expect(deriveStations(bowlsCatalog, sel)).toEqual(["Bowls"]);
+    expect(deriveFavorites(bowlsCatalog, sel)).toEqual(["Bowls"]);
+  });
+
+  it("writes exactly Bowls when the card is turned on", () => {
+    const sel = toggleStation(selectionFromRow(["Pastaria"], [], bowlsCatalog), "bowls");
+    expect(deriveStations(bowlsCatalog, sel)).toEqual(["Bowls", "Pastaria"]);
   });
 });
