@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { OTP_INPUT_MAX_LENGTH, normalizeOtpCode } from "@/lib/plated/otp";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { landingPath } from "@/lib/supabase/landing";
 
@@ -82,7 +83,7 @@ export function SignIn() {
   );
 }
 
-/** "Check your email", plus the 6-digit code from the same email for when a link scanner used up the link. */
+/** "Check your email", plus the code from the same email for when a link scanner used up the link. */
 function CheckEmail({ email, onReset }: { email: string; onReset: () => void }) {
   const router = useRouter();
   const [code, setCode] = useState("");
@@ -91,14 +92,16 @@ function CheckEmail({ email, onReset }: { email: string; onReset: () => void }) 
 
   const verify = async (e: FormEvent) => {
     e.preventDefault();
-    const token = code.replace(/\s/g, "");
-    if (!/^\d{6}$/.test(token)) {
-      setError("Enter the 6-digit code from the email.");
+    const token = normalizeOtpCode(code);
+    if (!token) {
+      setError("Enter the code from the email.");
       return;
     }
     setBusy(true);
     const supabase = supabaseBrowser();
-    const { error: err } = await supabase.auth.verifyOtp({ email, token, type: "email" });
+    // A sign-in email's code is type "email"; an invite email's is type "invite".
+    let { error: err } = await supabase.auth.verifyOtp({ email, token, type: "email" });
+    if (err) ({ error: err } = await supabase.auth.verifyOtp({ email, token, type: "invite" }));
     if (err) {
       setBusy(false);
       setError("That code didn’t work. It may have expired; send a new link.");
@@ -120,15 +123,15 @@ function CheckEmail({ email, onReset }: { email: string; onReset: () => void }) 
         </p>
         <form className="mt-6 space-y-2 text-left" onSubmit={verify} noValidate>
           <Label htmlFor="code" className="text-muted-foreground">
-            Or enter the 6-digit code from the email
+            Or enter the code from the email
           </Label>
           <div className="flex gap-2">
             <Input
               id="code"
               inputMode="numeric"
               autoComplete="one-time-code"
-              maxLength={7}
-              placeholder="123456"
+              maxLength={OTP_INPUT_MAX_LENGTH}
+              placeholder="12345678"
               className="font-mono tracking-widest"
               value={code}
               onChange={(e) => setCode(e.target.value)}

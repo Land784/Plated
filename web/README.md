@@ -6,7 +6,7 @@ shadcn/ui, mobile-first, light/dark from the system setting.
 
 | Route | What it does |
 |---|---|
-| `/` | Sign in: email magic link (plus the 6-digit code from the same email) |
+| `/` | Sign in: email magic link (plus the code from the email, sign-in or invite) |
 | `/auth/confirm` | Route handler: `verifyOtp({ token_hash, type })` for `email` and `invite`, then Setup on first run, else Settings |
 | `/setup` | Where you eat / When / What you like, then Finish |
 | `/settings` | Summary with an Edit per section, pause, name |
@@ -76,7 +76,7 @@ invite.
   redirect).
 - **Email templates** must link to `/auth/confirm` with a token hash
   (not the default `{{ .ConfirmationURL }}`, which uses a flow the app
-  doesn't handle), and include `{{ .Token }}`, the 6-digit code, because
+  doesn't handle), and include `{{ .Token }}`, the code from the email (6 to 10 digits per the project's OTP length; this project sends 8), because
   mail link scanners can use up a link before the person taps it:
   - Magic link: `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=email`
   - Invite: `{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=invite`
