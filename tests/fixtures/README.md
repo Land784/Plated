@@ -11,13 +11,26 @@
   `serving_size_unit: "z"` instead of `"oz"`).
 - `real_north_dinner_2026-09-24.json` -- a **real** (trimmed) response
   from North's dinner week containing 2026-09-24, captured that day.
-  Only that day is kept, and within it only the Domer Diner, Mezze and
-  Crust & Co stations, with every field of every kept row exactly as
-  returned. Chosen because it exercises everything the protein picks
-  handle: bulk-recipe rows (three whole pizzas at 2473-3996 cal, serving
-  "1 pizza"), an item whose only tag is the dietary label "High
-  Performance", tiny sides below the protein floor, and the `z` and
-  `potatoe` unit quirks.
+  Only that day is kept, and within it only the stations on the
+  example subscriber's allowlist (Comfort Kitchen, La Mesa, Green &
+  Grains, Domer Diner, Mezze, Crust & Co, The Global Compass), each as a
+  whole block from its header row to the next header, with every field
+  of every kept row exactly as returned. Chosen because it exercises
+  everything the picks and the notification's mains rule handle:
+  bulk-recipe rows (three whole pizzas at 2473-3996 cal, serving "1
+  pizza"), an item whose only tag is the dietary label "High
+  Performance", tiny sides below the protein floor, a main promoted by
+  its serving unit ("1 fillet"), a station published under a variant
+  name ("The Global Compass"), and the `z` and `potatoe` unit quirks.
+- `real_south_dinner_2026-09-24.json` -- the same trim of South's dinner
+  week containing 2026-09-24 (Domer Diner, Pasta Stir Fry, Crust & Co,
+  La Mesa, Comfort Kitchen, Global Compass, Mezze, Pastaria), rows
+  verbatim. Paired with the North file to test the full notification
+  for one real meal: South serves the same picks combo as North that
+  night (so the halls merge), a taco promoted only by its unit ("1
+  taco", 3g protein), a build-your-own station with no main at all
+  (Pastaria) and a single 1477 cal row (Pasta Stir Fry), both of which
+  fall back to one item.
 - `real_schools_2026-09-20.json` -- the real, full response from
   `GET https://nd.api.nutrislice.com/menu/api/schools/`, listing both
   dining halls and their confirmed `menu_type` slugs. Not currently
