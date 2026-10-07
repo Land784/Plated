@@ -73,11 +73,11 @@ class AllergenTag(BaseModel):
     food_icon_group, type, and behavior values), as "Vegan",
     "Vegetarian", and "High Performance". The only signal is the name
     string. This is fine for allergen *exclusion* matching (we only
-    check whether a specific excluded name appears), but it means an
-    item with only non-allergen tags (e.g. just "Vegan") still counts
-    as "has known icon data" even though no allergen was specifically
-    ruled out. See allergens.py for how this is used, and CLAUDE.md's
-    "missing allergen data means unknown, not safe" rule.
+    check whether a specific excluded name appears). An item with only
+    non-allergen tags (e.g. just "Vegan") has no allergen data, since
+    no allergen was ruled out; allergens.py's DIETARY_LABELS decides
+    which names those are. See CLAUDE.md's "missing allergen data means
+    unknown, not safe" rule.
     """
 
     model_config = ConfigDict(extra="ignore")

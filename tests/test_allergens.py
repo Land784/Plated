@@ -1,4 +1,9 @@
-from menu.allergens import UnknownAllergenPolicy, filter_items, item_is_allergen_safe
+from menu.allergens import (
+    UnknownAllergenPolicy,
+    filter_items,
+    has_known_allergen_data,
+    item_is_allergen_safe,
+)
 from tests.conftest import make_item
 
 
@@ -43,3 +48,25 @@ def test_filter_items_can_exclude_unknown_instead():
 
     assert unknown in dropped
     assert unknown not in keep
+
+
+def test_dietary_labels_alone_are_not_allergen_data():
+    # Garden Herb Grilled Chicken's only tag is "High Performance".
+    item = make_item("Grilled Chicken", protein_g=21, calories=89, allergens=["High Performance"])
+    assert not has_known_allergen_data(item)
+    assert item_is_allergen_safe(item, {"peanuts"}) is None
+
+
+def test_a_real_allergen_next_to_a_dietary_label_is_known():
+    item = make_item("Falafel", protein_g=6, calories=145, allergens=["Vegan", "Sesame"])
+    assert has_known_allergen_data(item)
+    assert item_is_allergen_safe(item, {"sesame"}) is False
+
+
+def test_exclude_policy_drops_items_with_only_dietary_labels():
+    labelled = make_item("Grilled Chicken", protein_g=21, calories=89, allergens=["Vegan"])
+    keep, dropped = filter_items(
+        [labelled], {"peanuts"}, unknown_policy=UnknownAllergenPolicy.EXCLUDE
+    )
+    assert keep == []
+    assert dropped == [labelled]

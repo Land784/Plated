@@ -11,6 +11,13 @@ from enum import StrEnum
 
 from menu.models import MenuItem
 
+# Nutrislice mixes dietary labels into the same tag list as allergens,
+# with identical metadata (see AllergenTag in menu/models.py). These are
+# not allergen information. It is deliberately a list of known
+# NON-allergens rather than of allergens: a tag name nobody anticipated
+# counts as allergen data instead of being silently ignored.
+DIETARY_LABELS = frozenset({"vegan", "vegetarian", "high performance"})
+
 
 class UnknownAllergenPolicy(StrEnum):
     FLAG = "flag"
@@ -18,17 +25,25 @@ class UnknownAllergenPolicy(StrEnum):
 
 
 def has_known_allergen_data(item: MenuItem) -> bool:
-    """True if Nutrislice actually reported allergen tags for this item."""
-    return bool(item.food and item.food.allergens)
+    """True if Nutrislice reported at least one tag that isn't a dietary label.
+
+    An item tagged only "High Performance" or "Vegan" has no allergen
+    information at all, so it is unknown exactly like an untagged item.
+    """
+    tags = item.food.allergens if item.food else []
+    return any(tag.name.strip().lower() not in DIETARY_LABELS for tag in tags)
 
 
 def item_is_allergen_safe(item: MenuItem, excluded_allergens: set[str]) -> bool | None:
     """Return True/False if we can tell, or None if allergen data is unknown."""
+    tags = {a.name.strip().lower() for a in item.food.allergens} if item.food else set()
+    excluded = {a.strip().lower() for a in excluded_allergens}
+    # A matching tag excludes the item whatever else is (or isn't) known.
+    if tags & excluded:
+        return False
     if not has_known_allergen_data(item):
         return None
-    tags = {a.name.lower() for a in item.food.allergens}
-    excluded = {a.lower() for a in excluded_allergens}
-    return not (tags & excluded)
+    return True
 
 
 def is_unknown(item: MenuItem, excluded_allergens: set[str]) -> bool:

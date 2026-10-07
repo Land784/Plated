@@ -210,3 +210,19 @@ def test_real_dinner_fixture_builds_a_sensible_combo():
     assert _names(plan) == [(2, "Garden Herb Grilled Chicken"), (1, "Pork Tenderloin Agrodolce")]
     assert plan.totals == {"protein": 78, "carbs": 12, "fat": 16, "calories": 513}
     assert plan.goals_met is True
+
+
+def test_exclude_policy_never_picks_an_item_tagged_only_with_dietary_labels():
+    # Seen live: with exclude_allergens set and policy "exclude", an item
+    # tagged only "High Performance" was still recommended.
+    labelled = make_item(
+        "Grilled Chicken", protein_g=21, calories=89, allergens=["High Performance"]
+    )
+    known = make_item("Pork Tenderloin", protein_g=36, calories=335, allergens=["Dairy"])
+    plan = plan_meal(
+        [labelled, known],
+        {"protein": Goal(min=30)},
+        excluded_allergens={"peanuts"},
+        unknown_policy=UnknownAllergenPolicy.EXCLUDE,
+    )
+    assert [p.item for p in plan.items] == [known]
