@@ -23,7 +23,13 @@ import {
   type Chip,
   type ChipState,
 } from "@/lib/plated/schedule";
-import { toggleFavorite, toggleStation, visibleStations, type CatalogStation } from "@/lib/plated/stations";
+import {
+  isBowlsGroup,
+  toggleFavorite,
+  toggleStation,
+  visibleStations,
+  type CatalogStation,
+} from "@/lib/plated/stations";
 import { zoneLabel } from "@/lib/plated/time";
 
 import { Callout, PageTitle, SectionLabel, Seg } from "./bits";
@@ -309,6 +315,9 @@ function StationCard({
         </span>
         <span className="min-w-0 flex-1">
           <span className="st-name block font-medium leading-snug">{station.name}</span>
+          {isBowlsGroup(station) ? (
+            <span className="st-dish mt-0.5 block text-sm font-medium text-muted-foreground">Rotates daily</span>
+          ) : null}
           <span
             className={`st-dish mt-0.5 line-clamp-2 block text-sm text-muted-foreground ${
               station.dishes.length ? "" : "italic"

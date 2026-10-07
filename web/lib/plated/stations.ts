@@ -27,15 +27,31 @@ export type CatalogStation = {
   dishes: string[];
 };
 
-/** Mirrors menu/digest.py normalize_station(). */
+/**
+ * South's rotating bowl counter ("Athenian Rice Bowl", "Harvest Bowl", ...)
+ * is one counter, so every bowl-named station is one group with this
+ * normalized token, and the `stations` view labels it "Bowls".
+ */
+export const BOWLS_ID = "bowls";
+export const BOWLS_LABEL = "Bowls";
+const BOWL_WORD = /\bbowls?\b/;
+/** Non-food names ("Harvest Bowl Toppings") are never grouped, as in the Python rule. */
+const NOT_FOOD_WORD = /condiment|topping|dressing/;
+
+/** Mirrors menu/digest.py normalize_station(), including the bowls group. */
 export function normalizeStation(name: string): string {
-  return name.replace(/\s+/g, " ").trim().toLowerCase().replace(/^the\s+/, "");
+  const id = name.replace(/\s+/g, " ").trim().toLowerCase().replace(/^the\s+/, "");
+  return BOWL_WORD.test(id) && !NOT_FOOD_WORD.test(id) ? BOWLS_ID : id;
+}
+
+export function isBowlsGroup(station: Pick<CatalogStation, "id">): boolean {
+  return station.id === BOWLS_ID;
 }
 
 /** A station seen only at these meals is a breakfast station (weekend brunch reuses them). */
 const BREAKFAST_MEALS = new Set(["breakfast", "brunch"]);
 
-const hasArticle =(name: string) => /^the\s+/i.test(name.trim());
+const hasArticle = (name: string) => /^the\s+/i.test(name.trim());
 
 /**
  * Turn view rows into the catalog: food stations only, shared spellings
@@ -68,7 +84,8 @@ export function buildCatalog(rows: StationViewRow[]): CatalogStation[] {
   const catalog: CatalogStation[] = [];
   for (const [id, acc] of byId) {
     if (!acc.halls.size) continue; // seen only at a hall the app doesn't offer
-    const name = acc.names.find((n) => !hasArticle(n)) ?? acc.names[0];
+    // The bowls group is written to the row as exactly "Bowls", whatever spellings fed it.
+    const name = id === BOWLS_ID ? BOWLS_LABEL : (acc.names.find((n) => !hasArticle(n)) ?? acc.names[0]);
     const meals = [...acc.meals];
     catalog.push({
       id,
