@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import time
 from datetime import date as Date
+from datetime import timedelta
 from pathlib import Path
 
 import httpx
@@ -56,8 +57,19 @@ class MenuFetchError(RuntimeError):
     """Raised when the Nutrislice API can't be reached or returns junk."""
 
 
-def _cache_path(cache_dir: Path, school_slug: str, menu_type: str, d: Date) -> Path:
-    return cache_dir / f"{school_slug}__{menu_type}__{d.isoformat()}.json"
+def week_start(d: Date) -> Date:
+    """The Sunday on or before ``d``.
+
+    Nutrislice weeks run Sunday to Saturday: a request for Tuesday
+    2026-09-22 returned days from Sunday 2026-09-20. Requesting and
+    caching by the week's Sunday means every day of a week shares one
+    request.
+    """
+    return d - timedelta(days=(d.weekday() + 1) % 7)
+
+
+def _cache_path(cache_dir: Path, school_slug: str, menu_type: str, sunday: Date) -> Path:
+    return cache_dir / f"{school_slug}__{menu_type}__{sunday.isoformat()}.json"
 
 
 def _read_cache(path: Path) -> dict | None:
@@ -85,11 +97,13 @@ def fetch_week_raw(
 ) -> dict:
     """Fetch the raw JSON for the week containing ``d``.
 
-    Caches to disk by (school_slug, menu_type, date) so the live API
-    is hit at most a few times per day, per CLAUDE.md's "being a good
-    API citizen" section.
+    Requests and caches to disk by (school_slug, menu_type, the week's
+    Sunday), so the live API is hit once per hall and meal type per
+    week however many of its days are asked for, per CLAUDE.md's "being
+    a good API citizen" section.
     """
-    cache_file = _cache_path(cache_dir, school_slug, menu_type, d)
+    sunday = week_start(d)
+    cache_file = _cache_path(cache_dir, school_slug, menu_type, sunday)
 
     if use_cache:
         cached = _read_cache(cache_file)
@@ -99,9 +113,9 @@ def fetch_week_raw(
     url = BASE_URL.format(
         school_slug=school_slug,
         menu_type=menu_type,
-        yyyy=d.year,
-        mm=f"{d.month:02d}",
-        dd=f"{d.day:02d}",
+        yyyy=sunday.year,
+        mm=f"{sunday.month:02d}",
+        dd=f"{sunday.day:02d}",
     )
 
     owns_client = client is None

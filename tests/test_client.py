@@ -83,9 +83,10 @@ def test_fetch_week_requests_the_verified_api_host(tmp_path):
     )
 
     assert len(seen_urls) == 1
+    # Requested for Monday 2024-01-08; Nutrislice weeks start on Sunday.
     assert seen_urls[0] == (
         "https://nd.api.nutrislice.com/menu/api/weeks/school/"
-        "north-dining-hall/menu-type/lunch/2024/01/08/"
+        "north-dining-hall/menu-type/lunch/2024/01/07/"
     )
 
 
@@ -104,3 +105,42 @@ def test_fetch_week_uses_cache(tmp_path):
     client.fetch_week("north-dining-hall", "lunch", d, cache_dir=tmp_path, client=test_client)
 
     assert calls["count"] == 1
+
+
+def test_week_start_is_the_sunday_on_or_before():
+    assert client.week_start(date(2026, 10, 4)) == date(2026, 10, 4)  # Sunday
+    assert client.week_start(date(2026, 10, 7)) == date(2026, 10, 4)  # Wednesday
+    assert client.week_start(date(2026, 10, 10)) == date(2026, 10, 4)  # Saturday
+    assert client.week_start(date(2026, 10, 11)) == date(2026, 10, 11)
+
+
+def test_two_dates_in_one_week_share_one_request(tmp_path):
+    """The cache is keyed by the week, so a second day of the same week is free."""
+    fixture = _load_fixture("sample_week.json")
+    calls = {"count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        return httpx.Response(200, json=fixture)
+
+    test_client = httpx.Client(transport=httpx.MockTransport(handler))
+    for d in (date(2024, 1, 8), date(2024, 1, 9), date(2024, 1, 13)):
+        client.fetch_week("north-dining-hall", "lunch", d, cache_dir=tmp_path, client=test_client)
+
+    assert calls["count"] == 1
+    assert [p.name for p in tmp_path.iterdir()] == ["north-dining-hall__lunch__2024-01-07.json"]
+
+
+def test_the_next_week_is_a_new_request(tmp_path):
+    fixture = _load_fixture("sample_week.json")
+    calls = {"count": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["count"] += 1
+        return httpx.Response(200, json=fixture)
+
+    test_client = httpx.Client(transport=httpx.MockTransport(handler))
+    for d in (date(2024, 1, 13), date(2024, 1, 14)):
+        client.fetch_week("north-dining-hall", "lunch", d, cache_dir=tmp_path, client=test_client)
+
+    assert calls["count"] == 2
