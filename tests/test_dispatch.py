@@ -123,18 +123,18 @@ class _Recorder:
 
         monkeypatch.setattr(cli.NtfyNotifier, "send", send)
 
-        def has_menus_for(url, key, d):
+        def has_store_run(url, key, d):
             if isinstance(menus_stored, Exception):
                 raise menus_stored
             return menus_stored
 
-        def store_day(url, key, d, *, now):
+        def store_week(url, key, d, *, now):
             # Sends come first, so a slow Nutrislice can't delay them.
             self.stored.append((d, len(self.sent)))
             return list(store_problems)
 
-        monkeypatch.setattr(cli.menus_store, "has_menus_for", has_menus_for)
-        monkeypatch.setattr(cli.menus_store, "store_day", store_day)
+        monkeypatch.setattr(cli.menus_store, "has_store_run", has_store_run)
+        monkeypatch.setattr(cli.menus_store, "store_week", store_week)
 
     def run(self, now="2026-09-25T11:40") -> int:
         return cli.main(["dispatch", "--supabase", "--now", now])
@@ -238,11 +238,11 @@ def _store_command(monkeypatch, problems=()):
     calls = []
     monkeypatch.setattr(cli.supabase_users, "credentials_from_env", lambda: ("url", "key"))
 
-    def store_day(url, key, d, *, now):
+    def store_week(url, key, d, *, now):
         calls.append(d)
         return list(problems)
 
-    monkeypatch.setattr(cli.menus_store, "store_day", store_day)
+    monkeypatch.setattr(cli.menus_store, "store_week", store_week)
     return calls
 
 

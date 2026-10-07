@@ -9,15 +9,18 @@
 -- (`menu subscribers invite --link` finds rows by name).
 --
 -- Also sets the max_items_per_station default to 3, matching
--- menu.users.DEFAULT_MAX_ITEMS. Existing rows keep their value.
+-- menu.users.DEFAULT_MAX_ITEMS (existing rows keep their value), and
+-- adds menu_store_runs, the menus store's success marker (bottom).
 --
 -- Additive; every existing row (written by `subscribers push`, which
 -- formats times as zero-padded HH:MM) satisfies these checks, and a row
 -- that didn't would make this migration fail rather than change data.
 --
--- APPLY BEFORE deploying the web app. Safe to apply before or after the
--- runner code: the runner never writes these columns in a shape the
--- checks reject.
+-- APPLY BEFORE deploying the web app, and BEFORE merging the runner
+-- code that reads menu_store_runs (without it the daily menus store
+-- reports a failed run; sends are unaffected). Safe to apply before any
+-- code: nothing on main names menu_store_runs, and the runner never
+-- writes subscriber columns in a shape the checks reject.
 
 create function public.valid_schedule(schedule jsonb) returns boolean
 language plpgsql
@@ -67,3 +70,17 @@ alter table public.subscribers
   add constraint subscribers_name_key unique (name);
 
 alter table public.subscribers alter column max_items_per_station set default 3;
+
+-- One row per Eastern local date whose menus store (menu/menus_store.py)
+-- finished with no problems. The notify job stores the week's menus on
+-- its first run after 05:00 that finds no row for today; a store that
+-- hit a problem writes none, so the next run retries. Pruned with the
+-- menus after 60 days. Only the secret key touches it: RLS on, no
+-- policies, no grants.
+create table public.menu_store_runs (
+  local_date date primary key,
+  stored_at timestamptz not null default now()
+);
+
+alter table public.menu_store_runs enable row level security;
+revoke all on public.menu_store_runs from anon, authenticated;

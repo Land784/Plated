@@ -234,24 +234,25 @@ def _release(credentials, claim, claiming: bool, problems: list[str], label: str
 
 
 def _store_menus_if_due(credentials: tuple[str, str], now_utc: datetime) -> list[str]:
-    """Store today's menus on the first run after 05:00 Eastern.
+    """Store this week's menus on the first run after 05:00 Eastern.
 
-    "First" is a ``menus`` row existing for today, so no other state is
-    kept. Returns problems; nothing here raises.
+    "First" means no ``menu_store_runs`` row for today: a store that hit
+    a problem records none, so the next run retries. Returns problems;
+    nothing here raises.
     """
     today = menus_store.store_due(now_utc)
     if today is None:
         return []
     try:
-        if menus_store.has_menus_for(*credentials, today):
+        if menus_store.has_store_run(*credentials, today):
             return []
-        return menus_store.store_day(*credentials, today, now=now_utc)
+        return menus_store.store_week(*credentials, today, now=now_utc)
     except Exception as exc:  # noqa: BLE001 - storing must never fail the sends
         return [f"menus store: {exc}"]
 
 
 def cmd_menus_store(args: argparse.Namespace) -> int:
-    """Fetch and store one day's menus for every hall and meal, now."""
+    """Fetch and store the week containing a date, every hall and meal, now."""
     credentials = supabase_users.credentials_from_env()
     now_utc = datetime.now(UTC)
     day = (
@@ -259,7 +260,7 @@ def cmd_menus_store(args: argparse.Namespace) -> int:
         if args.date
         else now_utc.astimezone(ZoneInfo(menus_store.STORE_TIMEZONE)).date()
     )
-    problems = menus_store.store_day(*credentials, day, now=now_utc)
+    problems = menus_store.store_week(*credentials, day, now=now_utc)
     for problem in problems:
         print(problem, file=sys.stderr)
     print(f"menus store: {day.isoformat()} done", file=sys.stderr)
@@ -347,9 +348,9 @@ def build_parser() -> argparse.ArgumentParser:
     menus = sub.add_parser("menus", help="The menus saved in Supabase for the web app")
     menus_sub = menus.add_subparsers(dest="menus_command", required=True)
     store = menus_sub.add_parser(
-        "store", help="Fetch and save one day's menus (dispatch does this daily)"
+        "store", help="Fetch and save a week's menus (dispatch does this daily)"
     )
-    store.add_argument("--date", help="YYYY-MM-DD; defaults to today in Eastern time")
+    store.add_argument("--date", help="YYYY-MM-DD in the week to store; default today, Eastern")
     store.set_defaults(func=cmd_menus_store)
 
     subs = sub.add_parser("subscribers", help="Manage subscribers stored in Supabase")

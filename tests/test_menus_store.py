@@ -229,6 +229,13 @@ class FakeSupabase:
     def client(self) -> httpx.Client:
         return httpx.Client(transport=httpx.MockTransport(self))
 
+    def calls(self) -> list[tuple[str, str]]:
+        return [(r.method, r.url.path.removeprefix("/rest/v1/")) for r in self.requests]
+
+
+def _week(name: str) -> WeekMenu:
+    return WeekMenu.model_validate(json.loads((FIXTURES / name).read_text()))
+
 
 def _fetcher(served: dict, failing: set | None = None):
     calls: list[tuple] = []
@@ -237,122 +244,168 @@ def _fetcher(served: dict, failing: set | None = None):
         calls.append((hall, meal, d))
         if failing and (hall, meal) in failing:
             raise MenuFetchError("Nutrislice down")
-        return served.get((hall, meal))
+        return served.get((hall, meal), WeekMenu())
 
     fetch.calls = calls
     return fetch
 
 
 SERVED = {
-    ("north-dining-hall", "dinner"): _day("real_north_dinner_2026-09-24.json"),
-    ("south-dining-hall", "dinner"): _day("real_south_dinner_2026-09-24.json"),
+    # An empty Sunday and a Monday with food.
+    ("north-dining-hall", "lunch"): _week("real_north_lunch_2026-09-21.json"),
+    ("north-dining-hall", "dinner"): _week("real_north_dinner_2026-09-24.json"),
+    ("south-dining-hall", "dinner"): _week("real_south_dinner_2026-09-24.json"),
 }
 
+ALL_MENUS = sorted(
+    (hall, meal, DAY)
+    for hall in ("north-dining-hall", "south-dining-hall")
+    for meal in ("breakfast", "brunch", "lunch", "late-lunch", "dinner")
+)
 
-def test_store_day_fetches_every_hall_and_meal_once():
+
+def _store(fake: FakeSupabase, fetch=None) -> list[str]:
+    return menus_store.store_week(
+        URL, SECRET, DAY, now=NOW, fetch=fetch or _fetcher(SERVED), client=fake.client
+    )
+
+
+def test_store_week_makes_one_week_request_per_hall_and_meal():
     fake = FakeSupabase()
     fetch = _fetcher(SERVED)
 
-    menus_store.store_day(URL, SECRET, DAY, now=NOW, fetch=fetch, client=fake.client)
+    _store(fake, fetch)
 
-    assert sorted(fetch.calls) == sorted(
-        (hall, meal, DAY)
-        for hall in ("north-dining-hall", "south-dining-hall")
-        for meal in ("breakfast", "brunch", "lunch", "late-lunch", "dinner")
-    )
+    assert sorted(fetch.calls) == ALL_MENUS
 
 
-def test_store_day_upserts_menus_then_replaces_stations_then_prunes():
+def test_store_week_saves_every_day_with_food_then_prunes_then_records():
     fake = FakeSupabase()
 
-    problems = menus_store.store_day(
-        URL, SECRET, DAY, now=NOW, fetch=_fetcher(SERVED), client=fake.client
-    )
+    problems = _store(fake)
 
     assert problems == []
-    upsert, delete_stations, insert_stations, prune = fake.requests
+    assert fake.calls() == [
+        ("POST", "menus"),  # north lunch
+        ("DELETE", "menu_stations"),
+        ("POST", "menu_stations"),
+        ("POST", "menus"),  # north dinner
+        ("DELETE", "menu_stations"),
+        ("POST", "menu_stations"),
+        ("POST", "menus"),  # south dinner
+        ("DELETE", "menu_stations"),
+        ("POST", "menu_stations"),
+        ("DELETE", "menus"),
+        ("DELETE", "menu_store_runs"),
+        ("POST", "menu_store_runs"),
+    ]
     for request in fake.requests:
         assert request.headers["apikey"] == SECRET
 
-    assert (upsert.method, upsert.url.path) == ("POST", "/rest/v1/menus")
-    assert upsert.url.params["on_conflict"] == "date,hall,meal"
-    assert "resolution=merge-duplicates" in upsert.headers["prefer"]
-    rows = json.loads(upsert.content)
-    # Only menus with food are stored: dinner at each hall.
+    lunch = fake.requests[0]
+    assert lunch.url.params["on_conflict"] == "date,hall,meal"
+    assert "resolution=merge-duplicates" in lunch.headers["prefer"]
+    rows = json.loads(lunch.content)
+    # The week's empty Sunday is skipped; its Monday is stored, not only DAY.
     assert [(r["date"], r["hall"], r["meal"]) for r in rows] == [
-        ("2026-09-24", "north-dining-hall", "dinner"),
-        ("2026-09-24", "south-dining-hall", "dinner"),
+        ("2026-09-21", "north-dining-hall", "lunch")
     ]
     assert rows[0]["fetched_at"] == "2026-09-24T10:00:00+00:00"
-    assert rows[0]["items"] == menus_store.trim_day(SERVED[("north-dining-hall", "dinner")])
+    assert rows[0]["items"] == menus_store.trim_day(SERVED[("north-dining-hall", "lunch")].days[1])
 
-    assert (delete_stations.method, delete_stations.url.path) == (
-        "DELETE",
-        "/rest/v1/menu_stations",
-    )
-    assert delete_stations.url.params["date"] == "eq.2026-09-24"
-    assert delete_stations.url.params["or"] == (
-        "(and(hall.eq.north-dining-hall,meal.eq.dinner),"
-        "and(hall.eq.south-dining-hall,meal.eq.dinner))"
-    )
+    clear = fake.requests[1]
+    assert dict(clear.url.params) == {
+        "hall": "eq.north-dining-hall",
+        "meal": "eq.lunch",
+        "date": "in.(2026-09-21)",
+    }
+    station_rows = json.loads(fake.requests[2].content)
+    assert {(r["date"], r["hall"], r["meal"]) for r in station_rows} == {
+        ("2026-09-21", "north-dining-hall", "lunch")
+    }
 
-    assert (insert_stations.method, insert_stations.url.path) == (
-        "POST",
-        "/rest/v1/menu_stations",
-    )
-    station_rows = json.loads(insert_stations.content)
-    assert {r["hall"] for r in station_rows} == {"north-dining-hall", "south-dining-hall"}
+    prune_menus, prune_runs, record = fake.requests[-3:]
+    assert dict(prune_menus.url.params) == {"date": "lt.2026-07-26"}
+    assert dict(prune_runs.url.params) == {"local_date": "lt.2026-07-26"}
+    assert json.loads(record.content) == {
+        "local_date": "2026-09-24",
+        "stored_at": "2026-09-24T10:00:00+00:00",
+    }
+    assert record.url.params["on_conflict"] == "local_date"
 
-    assert (prune.method, prune.url.path) == ("DELETE", "/rest/v1/menus")
-    assert dict(prune.url.params) == {"date": "lt.2026-07-26"}
 
-
-def test_a_failed_fetch_is_reported_and_the_rest_is_stored():
+def test_a_failed_fetch_is_reported_the_rest_stored_and_no_run_recorded():
     fake = FakeSupabase()
     fetch = _fetcher(SERVED, failing={("south-dining-hall", "dinner")})
 
-    problems = menus_store.store_day(URL, SECRET, DAY, now=NOW, fetch=fetch, client=fake.client)
+    problems = _store(fake, fetch)
 
-    assert problems == ["menus store: south-dining-hall/dinner on 2026-09-24: Nutrislice down"]
-    rows = json.loads(fake.requests[0].content)
-    assert [r["hall"] for r in rows] == ["north-dining-hall"]
+    assert problems == [
+        "menus store: south-dining-hall/dinner for the week of 2026-09-24: Nutrislice down"
+    ]
+    saved = [
+        json.loads(r.content)[0]["hall"]
+        for r in fake.requests
+        if r.url.path.endswith("menus") and r.method == "POST"
+    ]
+    assert saved == ["north-dining-hall", "north-dining-hall"]
+    # Partial, so the next run retries.
+    assert ("POST", "menu_store_runs") not in fake.calls()
 
 
-def test_nothing_published_writes_nothing_but_still_prunes():
+def test_nothing_published_writes_nothing_but_still_prunes_and_records():
     fake = FakeSupabase()
 
-    problems = menus_store.store_day(
-        URL, SECRET, DAY, now=NOW, fetch=_fetcher({}), client=fake.client
-    )
+    problems = _store(fake, _fetcher({}))
 
     assert problems == []
-    assert [(r.method, r.url.path) for r in fake.requests] == [("DELETE", "/rest/v1/menus")]
+    assert fake.calls() == [
+        ("DELETE", "menus"),
+        ("DELETE", "menu_store_runs"),
+        ("POST", "menu_store_runs"),
+    ]
 
 
-def test_a_supabase_failure_is_reported_not_raised():
-    fake = FakeSupabase(fail_on=lambda r: r.method == "POST" and r.url.path.endswith("/menus"))
+def test_a_supabase_failure_is_reported_not_raised_and_other_menus_go_on():
+    def fail(request: httpx.Request) -> bool:
+        return (
+            request.method == "POST"
+            and request.url.path.endswith("/menus")
+            and json.loads(request.content)[0]["hall"] == "south-dining-hall"
+        )
 
-    problems = menus_store.store_day(
-        URL, SECRET, DAY, now=NOW, fetch=_fetcher(SERVED), client=fake.client
-    )
+    fake = FakeSupabase(fail_on=fail)
+
+    problems = _store(fake)
 
     assert len(problems) == 1
-    assert problems[0].startswith("menus store: saving menus for 2026-09-24 failed: HTTP 500")
-    # Stations reference the menus rows, so they are not attempted.
-    assert all(not r.url.path.endswith("menu_stations") for r in fake.requests)
+    assert problems[0].startswith(
+        "menus store: south-dining-hall/dinner for the week of 2026-09-24: "
+        "saving south-dining-hall/dinner menus failed: HTTP 500"
+    )
+    # North was stored in full; South's stations hang off its menus rows,
+    # so they are not attempted.
+    assert fake.calls().count(("POST", "menu_stations")) == 2
+    assert ("POST", "menu_store_runs") not in fake.calls()
 
 
-@pytest.mark.parametrize(("existing", "expected"), [([{"date": "2026-09-24"}], True), ([], False)])
-def test_has_menus_for(existing, expected):
+@pytest.mark.parametrize(
+    ("existing", "expected"), [([{"local_date": "2026-09-24"}], True), ([], False)]
+)
+def test_has_store_run(existing, expected):
     fake = FakeSupabase(existing=existing)
 
-    assert menus_store.has_menus_for(URL, SECRET, DAY, client=fake.client) is expected
+    assert menus_store.has_store_run(URL, SECRET, DAY, client=fake.client) is expected
     request = fake.requests[0]
-    assert request.url.path == "/rest/v1/menus"
-    assert dict(request.url.params) == {"select": "date", "date": "eq.2026-09-24", "limit": "1"}
+    assert request.url.path == "/rest/v1/menu_store_runs"
+    assert dict(request.url.params) == {
+        "select": "local_date",
+        "local_date": "eq.2026-09-24",
+        "limit": "1",
+    }
 
 
-def test_has_menus_for_raises_on_error():
+def test_has_store_run_raises_on_error():
     fake = FakeSupabase(fail_on=lambda r: True)
     with pytest.raises(SupabaseError):
-        menus_store.has_menus_for(URL, SECRET, DAY, client=fake.client)
+        menus_store.has_store_run(URL, SECRET, DAY, client=fake.client)
