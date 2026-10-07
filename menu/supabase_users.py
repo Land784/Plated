@@ -7,8 +7,9 @@ validation path whichever source is used.
 
 Access is Supabase's PostgREST endpoint over plain httpx, not the
 ``supabase`` client library: two queries don't justify a dependency
-tree. The table has row level security on and no policies, so only the
-secret key can read it. That key and the URL come from the environment
+tree. The table has row level security on; its only policies let a
+signed-in web user read and edit their own row, so only the secret key
+can read every row. That key and the URL come from the environment
 (``SUPABASE_URL``, ``SUPABASE_SECRET_KEY``) and never from a file in
 this repo.
 """
@@ -35,6 +36,7 @@ COLUMNS = (
     "timezone",
     "halls",
     "stations",
+    "favorites",
     "max_items_per_station",
     "main_protein_g",
     "schedule",
@@ -148,6 +150,7 @@ def user_to_row(user: UserConfig) -> dict:
         "timezone": user.timezone,
         "halls": user.halls,
         "stations": user.stations,
+        "favorites": user.favorites,
         "max_items_per_station": user.max_items_per_station,
         "main_protein_g": user.main_protein_g,
         "schedule": {

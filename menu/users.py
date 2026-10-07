@@ -101,6 +101,10 @@ class UserConfig:
     timezone: str = DEFAULT_TIMEZONE
     halls: list[str] = field(default_factory=lambda: list(DEFAULT_HALLS))
     stations: list[str] = field(default_factory=list)
+    # Stations the subscriber starred in the web app. Already first in
+    # ``stations``, which is what the push renders; kept so the app knows
+    # which are starred.
+    favorites: list[str] = field(default_factory=list)
     max_items_per_station: int = DEFAULT_MAX_ITEMS
     main_protein_g: float = DEFAULT_MAIN_PROTEIN_G
     # weekday -> meal slug -> local send time
@@ -323,6 +327,10 @@ def parse_user(data: dict, source: str) -> UserConfig:
     if not isinstance(stations, list) or not all(isinstance(s, str) for s in stations):
         raise UserConfigError(f"{source}: 'stations' must be a list of strings")
 
+    favorites = data.get("favorites", [])
+    if not isinstance(favorites, list) or not all(isinstance(s, str) for s in favorites):
+        raise UserConfigError(f"{source}: 'favorites' must be a list of strings")
+
     halls = data.get("halls", list(DEFAULT_HALLS))
     if not isinstance(halls, list) or not halls:
         raise UserConfigError(f"{source}: 'halls' must be a non-empty list")
@@ -338,6 +346,7 @@ def parse_user(data: dict, source: str) -> UserConfig:
         timezone=timezone,
         halls=list(halls),
         stations=list(stations),
+        favorites=list(favorites),
         max_items_per_station=int(data.get("max_items_per_station", DEFAULT_MAX_ITEMS)),
         # A row from before the column existed has no key, so it gets the default.
         main_protein_g=_parse_number(

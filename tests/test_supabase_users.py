@@ -209,3 +209,30 @@ def test_release_deletes_exactly_that_claim():
         "meal": "eq.lunch",
         "local_date": "eq.2026-09-25",
     }
+
+
+def test_favorites_default_to_none_starred():
+    assert parse_user(ROW, "test").favorites == []
+
+
+def test_favorites_round_trip_and_are_written():
+    user = parse_user({**ROW, "favorites": ["Domer Diner"]}, "test")
+    row = user_to_row(user)
+    assert row["favorites"] == ["Domer Diner"]
+    assert parse_user(row, "test") == user
+
+
+def test_favorites_must_be_a_list_of_strings():
+    with pytest.raises(UserConfigError, match="favorites"):
+        parse_user({**ROW, "favorites": "Domer Diner"}, "test")
+
+
+def test_columns_the_web_app_adds_do_not_break_loading():
+    """A row with every column, user_id and active included, still parses."""
+    row = {**ROW, "id": "3f1c", "favorites": [], "user_id": "9a2b", "active": True}
+    assert parse_user(row, "test").name == "Wes"
+
+
+def test_user_id_is_never_selected_or_written():
+    assert "user_id" not in supabase_users.SELECT_COLUMNS
+    assert "favorites" in supabase_users.COLUMNS
