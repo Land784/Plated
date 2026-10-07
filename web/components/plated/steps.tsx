@@ -398,7 +398,7 @@ function StepWhat({ form, setForm, catalog }: StepProps) {
         </Callout>
       ) : null}
       {n || visible.length === 0 ? null : <Callout>Turn on at least one station, or your texts will be empty.</Callout>}
-      <p className="text-xs text-muted-foreground">Breakfast stations only show up in breakfast texts.</p>
+      <p className="text-xs text-muted-foreground">Breakfast stations only show up in breakfast and brunch texts.</p>
     </>
   );
 }

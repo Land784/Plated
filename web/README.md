@@ -30,6 +30,10 @@ npm test                     # vitest: schedule, stations, preview request
 npm run lint && npm run build
 ```
 
+Open it at `http://localhost:3000`, not `127.0.0.1:3000`: Next.js dev
+blocks cross-origin dev requests from hosts other than localhost, so the
+page loads but stays unhydrated on 127.0.0.1.
+
 `npm run dev` serves only the Next.js app. `/api/preview` is a Python
 function, so in plain `next dev` the Preview page shows "The preview
 isn't available right now." Run `vercel dev` from `web/` to serve both.
