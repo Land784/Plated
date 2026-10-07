@@ -132,6 +132,18 @@ NON_FOOD_STATIONS = frozenset(
         "desserts",
     }
 )
+# One counter published under a different name each day. South's bowl
+# counter is "Athenian Rice Bowl" one day, "Jerusalem Rice Bowl" or
+# "Harvest Bowl" the next, each with its own station_id. Any food
+# station whose lower-cased name matches ``pattern`` normalizes to the
+# key, so one allowlist entry covers them all; ``label`` is what the web
+# catalog shows (supabase/migrations/20261007000500_station_groups.sql
+# repeats the rule in SQL). A non-food bar ("Harvest Bowl Toppings")
+# never joins a group, or it would make the group non-food.
+STATION_GROUPS: dict[str, dict[str, str]] = {
+    "bowls": {"pattern": r"\bbowls?\b", "label": "Bowls"},
+}
+
 # Any station whose normalized name contains one of these is an add-on
 # bar, not a meal ("Grill Condiments", "Omelette Toppings").
 NON_FOOD_WORDS = ("condiment", "topping", "dressing")
@@ -187,10 +199,37 @@ class HallSection:
     lines: list[str]
 
 
-def normalize_station(name: str) -> str:
-    """Normalize a station name for matching against an allowlist."""
+def _plain_name(name: str) -> str:
+    """Lower case, single spaces, no leading "the"."""
     collapsed = _WHITESPACE.sub(" ", name).strip().lower()
     return _LEADING_ARTICLE.sub("", collapsed)
+
+
+def normalize_station(name: str) -> str:
+    """Normalize a station name for matching against an allowlist.
+
+    A food station in one of STATION_GROUPS normalizes to the group's
+    token, so every name it is published under matches every other
+    ("Harvest Bowl" matches an allowlist entry "Athenian Rice Bowl" or
+    "Bowls"). Station lines still print the day's published name.
+    """
+    plain = _plain_name(name)
+    if _is_food_name(plain):
+        for token, group in STATION_GROUPS.items():
+            if re.search(group["pattern"], plain):
+                return token
+    return plain
+
+
+def station_group_label(normalized: str) -> str | None:
+    """ "bowls" -> "Bowls"; None for a station that isn't a group."""
+    group = STATION_GROUPS.get(normalized)
+    return group["label"] if group else None
+
+
+def _is_food_name(plain: str) -> bool:
+    key = _plain_name(_AMPERSAND.sub(" and ", plain.replace("-", " ")))
+    return key not in NON_FOOD_STATIONS and not any(word in key for word in NON_FOOD_WORDS)
 
 
 def is_food_station(name: str) -> bool:
@@ -200,8 +239,7 @@ def is_food_station(name: str) -> bool:
     menus attach to many stations ("Deli Condiments", "MYO Pizza
     Toppings", "Salad Bar Dressing").
     """
-    key = normalize_station(_AMPERSAND.sub(" and ", normalize_station(name).replace("-", " ")))
-    return key not in NON_FOOD_STATIONS and not any(word in key for word in NON_FOOD_WORDS)
+    return _is_food_name(_plain_name(name))
 
 
 def group_by_station(day: DayMenu) -> list[Station]:
