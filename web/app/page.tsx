@@ -7,7 +7,7 @@ export default function SignInPage() {
   return (
     <Frame>
       <Header />
-      <main className="flex-1">
+      <main className="mx-auto w-full flex-1 lg:max-w-md">
         <Suspense>
           <SignIn />
         </Suspense>

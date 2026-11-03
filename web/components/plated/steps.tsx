@@ -55,7 +55,7 @@ export function StepPage({ top, footer, children }: { top: ReactNode; footer: Re
         {top}
         <div className="space-y-5">{children}</div>
       </div>
-      <div className="sticky bottom-0 z-10 border-t bg-background/95 px-4 pt-3 pb-[max(.75rem,env(safe-area-inset-bottom))] backdrop-blur md:rounded-b-3xl">
+      <div className="sticky bottom-0 z-10 border-t bg-background/95 px-4 pt-3 pb-[max(.75rem,env(safe-area-inset-bottom))] backdrop-blur md:rounded-b-3xl lg:rounded-none lg:rounded-bl-3xl">
         {footer}
       </div>
     </>
@@ -394,12 +394,12 @@ function StepWhat({ form, setForm, catalog }: StepProps) {
       {favs.length ? (
         <div className="space-y-2">
           <SectionLabel>Favorites · show first</SectionLabel>
-          {favs.map(card)}
+          <div className="grid gap-2 lg:grid-cols-2">{favs.map(card)}</div>
         </div>
       ) : null}
       <div className="space-y-2">
         {favs.length ? <SectionLabel>Everything else</SectionLabel> : null}
-        {rest.map(card)}
+        <div className="grid gap-2 lg:grid-cols-2">{rest.map(card)}</div>
       </div>
       {breakfastWarning ? (
         <Callout>

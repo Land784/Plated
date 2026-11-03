@@ -1,8 +1,8 @@
 "use client";
 
 import { LoaderCircle } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { createContext, use, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { createContext, use, useCallback, useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -88,7 +88,23 @@ async function load(): Promise<LoadState | null> {
   return { status: "ready", email, row, catalog: buildCatalog((st.data ?? []) as StationViewRow[]) };
 }
 
-export function AppProvider({ children }: { children: ReactNode }) {
+/** Pages that edit the draft; on a desktop-width screen they get the live preview beside them. */
+const SPLIT_PATHS = ["/settings", "/setup"];
+const WIDE = "(min-width: 1024px)";
+
+function useWide(): boolean {
+  return useSyncExternalStore(
+    (cb) => {
+      const mq = window.matchMedia(WIDE);
+      mq.addEventListener("change", cb);
+      return () => mq.removeEventListener("change", cb);
+    },
+    () => window.matchMedia(WIDE).matches,
+    () => false,
+  );
+}
+
+export function AppProvider({ aside, children }: { aside: ReactNode; children: ReactNode }) {
   const router = useRouter();
   const [state, setState] = useState<LoadState>({ status: "loading" });
 
@@ -115,7 +131,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return (
       <Frame>
         <Header onSignOut={signOut} />
-        <main className="flex flex-1 flex-col justify-center p-6">
+        <main className="mx-auto flex w-full flex-1 flex-col justify-center p-6 lg:max-w-md">
           {state.status === "loading" ? (
             <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
               <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden /> Loading…
@@ -141,14 +157,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <Ready key={state.row.id} loaded={state} onSignOut={signOut}>
+    <Ready key={state.row.id} loaded={state} aside={aside} onSignOut={signOut}>
       {children}
     </Ready>
   );
 }
 
-function Ready({ loaded, onSignOut, children }: { loaded: Loaded; onSignOut: () => void; children: ReactNode }) {
+function Ready({
+  loaded,
+  aside,
+  onSignOut,
+  children,
+}: {
+  loaded: Loaded;
+  aside: ReactNode;
+  onSignOut: () => void;
+  children: ReactNode;
+}) {
   const { email, catalog } = loaded;
+  // Mounted only when shown, so phones never fetch a hidden preview.
+  const wide = useWide();
+  const path = usePathname();
+  const split = wide && SPLIT_PATHS.includes(path);
   const [row, setRow] = useState(loaded.row);
   const [saved, setSaved] = useState(() => formFromRow(loaded.row, catalog));
   const [draft, setDraftState] = useState(saved);
@@ -213,8 +243,20 @@ function Ready({ loaded, onSignOut, children }: { loaded: Loaded; onSignOut: () 
   return (
     <Ctx value={value}>
       <Frame>
-        <Header paused={!saved.active} onSignOut={onSignOut} />
-        <main className="flex-1">{children}</main>
+        <Header paused={!saved.active} nav={!chromeHidden} onSignOut={onSignOut} />
+        {split ? (
+          <div className="grid flex-1 grid-cols-[minmax(0,1fr)_420px]">
+            <main className="flex flex-col">{children}</main>
+            <aside
+              aria-label="Preview"
+              className="sticky top-14 h-[calc(100dvh-3.5rem)] overflow-y-auto border-l lg:rounded-br-3xl"
+            >
+              {aside}
+            </aside>
+          </div>
+        ) : (
+          <main className="mx-auto w-full flex-1 lg:max-w-2xl">{children}</main>
+        )}
         {chromeHidden ? null : <BottomNav />}
       </Frame>
     </Ctx>
