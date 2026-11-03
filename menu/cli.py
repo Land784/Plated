@@ -13,18 +13,27 @@ from menu import client, invite, menus_store, supabase_users
 from menu.allergens import UnknownAllergenPolicy
 from menu.config import PlatedConfig, load_config
 from menu.digest import (
+    MainsRule,
     build_message,
     build_picks_blocks,
     full_menu_link,
     join_blocks,
     meal_tags,
     notification_title,
+    plan_halls,
 )
-from menu.macros import Goal, describe_goal
+from menu.macros import describe_targets
 from menu.models import DayMenu, MenuItem
 from menu.notifier import ConsoleNotifier, NtfyNotifier
 from menu.schedule import DEFAULT_WINDOW_MINUTES, due_meals
-from menu.users import DEFAULT_TIMEZONE, MacrosConfig, PicksConfig, UserConfig, load_users
+from menu.users import (
+    DEFAULT_MAIN_PROTEIN_G,
+    DEFAULT_MAX_ITEMS,
+    DEFAULT_TIMEZONE,
+    PicksConfig,
+    UserConfig,
+    load_users,
+)
 
 
 def _meal_period_and_type(config: PlatedConfig, requested: str | None) -> tuple[str, str]:
@@ -75,22 +84,22 @@ def _build_today_picks(config: PlatedConfig, meal: str | None) -> tuple[str, lis
     """Picks for config.toml's single user, from every station of each hall.
 
     config.toml predates subscriber files, so its protein target and
-    calorie cap are translated into [macros] goals here. Halls are
+    calorie cap are translated into [macros] targets here. Halls are
     labelled with config.toml's names as written.
     """
     meal_period, menu_type = _meal_period_and_type(config, meal)
     days = _fetch_all_halls(config, menu_type, date.today())
 
-    goals = {"protein": Goal(target=config.protein_target_g)}
-    if config.calorie_cap is not None:
-        goals["calories"] = Goal(max=config.calorie_cap)
+    # shortcut: config.toml's calorie_cap has no equivalent now that goals
+    # are targets only; set a calories target in a subscriber file instead.
+    targets = {"protein": config.protein_target_g}
     picks = PicksConfig(
+        enabled=True,
         exclude_allergens=list(config.excluded_allergens),
         unknown_allergens=UnknownAllergenPolicy(config.unknown_allergen_policy),
     )
-    blocks = build_picks_blocks(
-        list(days.items()), None, MacrosConfig(goals=goals), picks, meal_period
-    )
+    rule = MainsRule(DEFAULT_MAIN_PROTEIN_G, picks.max_item_calories, DEFAULT_MAX_ITEMS)
+    blocks = build_picks_blocks(plan_halls(list(days.items()), targets, picks, rule), picks)
     return meal_period, join_blocks(blocks) or ["No items met the goals."]
 
 
@@ -140,10 +149,12 @@ def _resolve_now(raw: str | None, tz_name: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
-def _build_message(user: UserConfig, meal: str, local_date: date) -> list[str]:
+def _build_message(
+    user: UserConfig, meal: str, local_date: date, skip: set[str], picked: set[str]
+) -> list[str]:
     """Fetch the subscriber's halls and build the message; [] if nothing to send."""
     menus = {hall: client.fetch_day(hall, meal, local_date) for hall in user.halls}
-    return build_message(user, menus, meal)
+    return build_message(user, menus, meal, skip=skip, picked=picked)
 
 
 def cmd_dispatch(args: argparse.Namespace) -> int:
@@ -179,8 +190,18 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
                     problems.append(f"{label}: could not record the send: {exc}")
                     continue
 
+            picked: set[str] = set()
+            skip: set[str] = set()
+            if claiming and user.picks_on:
+                try:
+                    # Items picked at an earlier meal today aren't picked again.
+                    skip = supabase_users.picked_today(*credentials, user.id, due.local_date)
+                except Exception as exc:  # noqa: BLE001
+                    problems.append(f"{label}: could not read today's picks: {exc}")
+                    _release(credentials, claim, claiming, problems, label)
+                    continue
             try:
-                sections = _build_message(user, due.meal, due.local_date)
+                sections = _build_message(user, due.meal, due.local_date, skip, picked)
             except Exception as exc:  # noqa: BLE001
                 problems.append(f"{label}: fetch failed: {exc}")
                 _release(credentials, claim, claiming, problems, label)
@@ -205,6 +226,12 @@ def cmd_dispatch(args: argparse.Namespace) -> int:
             except Exception as exc:  # noqa: BLE001
                 problems.append(f"{label}: send failed: {exc}")
                 _release(credentials, claim, claiming, problems, label)
+                continue
+            if claiming and picked:
+                try:
+                    supabase_users.record_picks(*credentials, *claim, picked)
+                except Exception as exc:  # noqa: BLE001 - the push already went out
+                    problems.append(f"{label}: could not record picks: {exc}")
 
     print(f"dispatch: {sent} notification(s) sent", file=sys.stderr)
 
@@ -285,13 +312,7 @@ def cmd_subscribers_list(args: argparse.Namespace) -> int:
     users, bad_rows = supabase_users.load_users_from_supabase(url, key)
     for user in users:
         meals = sum(len(m) for m in user.schedule.values())
-        goals = (
-            ", ".join(describe_goal(n, g) for n, g in user.macros.goals.items())
-            if user.macros
-            else "no picks"
-        )
-        if user.macros and user.macros.meals:
-            goals += f" (+ overrides for {', '.join(user.macros.meals)})"
+        goals = describe_targets(user.macros) if user.picks_on else "no picks"
         print(f"{user.name}: {len(user.stations)} stations, {meals} scheduled meals/week, {goals}")
     print(f"{len(users)} active subscriber(s)", file=sys.stderr)
     for problem in bad_rows:

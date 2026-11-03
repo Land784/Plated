@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { DEFAULT_PICKS } from "@/lib/plated/nutrition";
 import { cleanName, formFromRow, parseSubscriberRow } from "@/lib/plated/form";
 import {
   NO_MENU_REASON,
@@ -52,8 +53,11 @@ describe("preview request", () => {
       stations: ["Pastaria", "Domer Diner"],
       meal: "dinner",
       date: "2026-10-07",
+      macros: null,
+      picks: DEFAULT_PICKS,
+      main_protein_g: 10,
     });
-    expect(Object.keys(req).sort()).toEqual(["date", "halls", "meal", "stations"]);
+    expect(Object.keys(req).sort()).toEqual(["date", "halls", "macros", "main_protein_g", "meal", "picks", "stations"]);
     expect(JSON.parse(JSON.stringify(req))).toEqual(req);
   });
 

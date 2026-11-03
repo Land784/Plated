@@ -1,16 +1,16 @@
 """Render the push a subscriber would get, for the web app's preview page.
 
-The web app posts its unsaved settings (halls, stations, a meal and a
-date); this reads that day's menus from the ``menus`` table (written by
+The web app posts its unsaved settings (halls, stations, nutrition
+settings, a meal and a date); this reads that day's menus from the ``menus`` table (written by
 menu/menus_store.py) and renders them with exactly the functions
 ``dispatch`` uses, so the preview can't drift from the real push.
 
 It runs as a Vercel Python function (web/api/preview.py, a thin adapter
 over :func:`handle_request`). It reads with the publishable key, since
 menus are public, and needs no secret and no sign-in. Everything a
-subscriber can't set in the web app (items per station, the mains
-protein floor, picks) is left at the defaults every invited subscriber
-has.
+subscriber can't set in the web app (items per station) is left at
+the defaults every invited subscriber has. Picks ignore what was picked
+earlier that day, since a preview has no send history.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from menu.menus_store import MENUS_TABLE, STORED_MEALS
 from menu.models import DayMenu
 from menu.notifier import compose_body
 from menu.supabase_users import TIMEOUT, URL_ENV, api_headers, raise_for_status
-from menu.users import DEFAULT_HALLS, UserConfig
+from menu.users import DEFAULT_HALLS, UserConfig, UserConfigError, parse_user
 
 PUBLISHABLE_KEY_ENV = "SUPABASE_PUBLISHABLE_KEY"
 
@@ -46,12 +46,17 @@ class PreviewInputError(ValueError):
     """The request body isn't a valid preview request."""
 
 
+# Optional request keys, validated exactly like a subscriber row.
+NUTRITION_KEYS = ("macros", "picks", "main_protein_g")
+
+
 @dataclass(frozen=True)
 class PreviewRequest:
     halls: list[str]
     stations: list[str]
     meal: str
     date: date
+    user: UserConfig
 
 
 def parse_request(data: object) -> PreviewRequest:
@@ -90,12 +95,21 @@ def parse_request(data: object) -> PreviewRequest:
     if day is None:
         raise PreviewInputError("date: YYYY-MM-DD")
 
-    return PreviewRequest(halls=list(halls), stations=list(stations), meal=meal, date=day)
-
-
-def preview_user(req: PreviewRequest) -> UserConfig:
-    # Never sent anywhere, so the topic is a placeholder.
-    return UserConfig(name="preview", ntfy_topic="preview", halls=req.halls, stations=req.stations)
+    try:
+        # Never sent anywhere, so the topic is a placeholder.
+        user = parse_user(
+            {
+                "name": "preview",
+                "ntfy_topic": "preview",
+                "halls": list(halls),
+                "stations": list(stations),
+                **{key: data[key] for key in NUTRITION_KEYS if key in data},
+            },
+            "preview",
+        )
+    except UserConfigError as exc:
+        raise PreviewInputError(str(exc)) from exc
+    return PreviewRequest(halls=user.halls, stations=user.stations, meal=meal, date=day, user=user)
 
 
 def render_preview(req: PreviewRequest, items_by_hall: Mapping[str, list[dict]]) -> dict:
@@ -114,7 +128,7 @@ def render_preview(req: PreviewRequest, items_by_hall: Mapping[str, list[dict]])
         )
         for hall in req.halls
     }
-    user = preview_user(req)
+    user = req.user
     lines = build_message(user, menus, req.meal)
     if not lines:
         published = any(day is not None for day in menus.values())

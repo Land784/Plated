@@ -1,12 +1,9 @@
-"""Nutrients a subscriber can set goals on, and what a goal means.
+"""Nutrients a subscriber can set targets on, and what a target means.
 
-A goal on one nutrient is any mix of a ``target`` (aim for this, within
-a tolerance), a ``min`` and a ``max``. The planner turns each goal into
-one allowed range for a meal's total; see :meth:`Goal.bounds`.
-
-Only nutrients Nutrislice actually reports are offered: on 2026-09-24
-every item at the tracked stations carried all seven below, while the
-vitamin fields were always null.
+A subscriber sets up to four per-meal targets (protein, carbs, fat in
+grams, calories). A plate meets a target when its total is within the
+subscriber's tolerance of it: a 60g protein target at 15% accepts
+51-69g. See menu/planner.py.
 """
 
 from __future__ import annotations
@@ -15,9 +12,7 @@ from dataclasses import dataclass
 
 from menu.models import MenuItem
 
-# A target with no explicit tolerance accepts totals within this
-# fraction of it: a 70g protein target means 59.5-80.5g.
-DEFAULT_TOLERANCE_FRACTION = 0.15
+DEFAULT_TOLERANCE_PCT = 15.0
 
 
 @dataclass(frozen=True)
@@ -34,9 +29,6 @@ NUTRIENTS: dict[str, Nutrient] = {
         Nutrient("carbs", "g", "carbs_g"),
         Nutrient("fat", "g", "fat_g"),
         Nutrient("calories", "", "calories"),
-        Nutrient("fiber", "g", "fiber_g"),
-        Nutrient("sugar", "g", "sugar_g"),
-        Nutrient("sodium", "mg", "sodium_mg"),
     )
 }
 
@@ -52,50 +44,17 @@ def nutrient_value(item: MenuItem, nutrient: str) -> float | None:
     return getattr(item.food.nutrition, NUTRIENTS[nutrient].field)
 
 
-@dataclass(frozen=True)
-class Goal:
-    target: float | None = None
-    min: float | None = None
-    max: float | None = None
-    tolerance: float | None = None
-
-    @property
-    def drives_picks(self) -> bool:
-        """True if the goal asks for *some* amount.
-
-        Goals made only of maxima are satisfied by eating nothing, so a
-        set of goals needs at least one target or min to pick anything.
-        """
-        return self.target is not None or self.min is not None
-
-    def bounds(self) -> tuple[float, float]:
-        """The allowed range for a meal's total, combining every part."""
-        low, high = 0.0, float("inf")
-        if self.target is not None:
-            tol = (
-                self.tolerance
-                if self.tolerance is not None
-                else self.target * DEFAULT_TOLERANCE_FRACTION
-            )
-            low, high = self.target - tol, self.target + tol
-        if self.min is not None:
-            low = max(low, self.min)
-        if self.max is not None:
-            high = min(high, self.max)
-        return low, high
+def bounds(target: float, tolerance_pct: float) -> tuple[float, float]:
+    tol = target * tolerance_pct / 100
+    return target - tol, target + tol
 
 
-def describe_range(nutrient: str, goal: Goal) -> str:
-    """The allowed range alone, e.g. "60-80g", "≤60g" or "≥8g"."""
-    unit = NUTRIENTS[nutrient].unit
-    low, high = goal.bounds()
-    if high == float("inf"):
-        return f"≥{low:.0f}{unit}"
-    if low <= 0:
-        return f"≤{high:.0f}{unit}"
-    return f"{low:.0f}-{high:.0f}{unit}"
+def describe_range(nutrient: str, target: float, tolerance_pct: float) -> str:
+    """The accepted range, e.g. "51-69g"."""
+    low, high = bounds(target, tolerance_pct)
+    return f"{low:.0f}-{high:.0f}{NUTRIENTS[nutrient].unit}"
 
 
-def describe_goal(nutrient: str, goal: Goal) -> str:
-    """Human-readable goal, e.g. "protein 60-80g" or "carbs ≤60g"."""
-    return f"{nutrient} {describe_range(nutrient, goal)}"
+def describe_targets(targets: dict[str, float]) -> str:
+    """ "protein 60g, calories 700"."""
+    return ", ".join(f"{n} {t:g}{NUTRIENTS[n].unit}" for n, t in targets.items())

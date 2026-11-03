@@ -10,6 +10,7 @@ import {
   servedReason,
   type PreviewResult,
 } from "@/lib/plated/preview";
+import { nutritionErrors } from "@/lib/plated/nutrition";
 
 import { useApp, type PreviewChoice } from "./app-provider";
 
@@ -31,7 +32,11 @@ export type PreviewState = {
  */
 export function usePreview(choice: PreviewChoice): PreviewState {
   const { draft, catalog } = useApp();
-  const local = isPreviewable(choice.meal, choice.date) ? servedReason(choice.meal, choice.date) : "Pick a meal and date.";
+  const local = !isPreviewable(choice.meal, choice.date)
+    ? "Pick a meal and date."
+    : nutritionErrors(draft.nutrition).length
+      ? "Fix the highlighted Nutrition fields to see the preview."
+      : servedReason(choice.meal, choice.date);
   const key = useMemo(
     () => (local ? null : JSON.stringify(buildPreviewRequest(draft, catalog, choice.meal, choice.date))),
     [local, draft, catalog, choice.meal, choice.date],

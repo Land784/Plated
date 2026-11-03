@@ -65,6 +65,31 @@ def test_preview_is_the_push_dispatch_would_send():
     assert result["body"].endswith(DISCLAIMER)
 
 
+def test_preview_renders_picks_from_the_nutrition_settings():
+    nutrition = {
+        "macros": {"protein": 60, "calories": 700},
+        "picks": {"enabled": True},
+        "main_protein_g": 12,
+    }
+    req = preview.parse_request(_request(**nutrition))
+
+    result = preview.render_preview(req, {row["hall"]: row["items"] for row in ROWS})
+
+    user = parse_user(
+        {
+            "name": "x",
+            "ntfy_topic": "x",
+            "halls": [SOUTH, NORTH],
+            "stations": STATIONS,
+            **nutrition,
+        },
+        "t",
+    )
+    body = compose_body("\n".join(build_message(user, DAYS, "dinner")), full_menu_link(user))
+    assert "PICKS · " in result["body"]
+    assert result["body"] == body
+
+
 def test_no_rows_means_no_menu_published():
     req = preview.parse_request(_request())
     assert preview.render_preview(req, {}) == {"sent": False, "reason": "no menu published"}
@@ -106,6 +131,9 @@ def test_only_the_requested_halls_are_rendered():
         _request(date="tomorrow"),
         _request(date=20260924),
         {k: v for k, v in _request().items() if k != "meal"},
+        _request(macros={"protein": -5}),
+        _request(picks={"max_main_servings": 9}),
+        _request(main_protein_g="ten"),
     ],
 )
 def test_bad_input_is_rejected(bad):

@@ -10,6 +10,7 @@ shadcn/ui, mobile-first, light/dark from the system setting.
 | `/auth/confirm` | Route handler: `verifyOtp({ token_hash, type })` for `email` and `invite`, then Setup on first run, else Settings |
 | `/setup` | Where you eat / When / What you like, then Finish |
 | `/settings` | Summary with an Edit per section, pause, name |
+| `/nutrition` | Plate picks switch, per-meal targets, allergens, plate rules; Save/Discard |
 | `/preview` | Your text for a meal and date, from the current (unsaved) form |
 | `/connect` | Your ntfy topic, iPhone and Android steps, send a test |
 
@@ -93,7 +94,9 @@ invite.
 
 `web/api/preview.py` is a Vercel Python function maintained with the
 Python package, not here. The app calls `POST /api/preview` with
-`{"halls": [...], "stations": [...], "meal": "dinner", "date": "YYYY-MM-DD"}`,
+`{"halls": [...], "stations": [...], "meal": "dinner", "date": "YYYY-MM-DD",
+"macros": {...} | null, "picks": {...}, "main_protein_g": 10}` (the last three
+validated by `parse_user`, like a row),
 built from the unsaved form (`lib/plated/preview.ts`), debounced 350 ms. It
 answers `{title, tags, body, bytes, sent: true}` or `{sent: false, reason}`.
 Menus are stored for the current Sunday-to-Saturday week only, so the date

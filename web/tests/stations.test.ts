@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { DEFAULT_PICKS } from "@/lib/plated/nutrition";
 import { formFromRow, formToUpdate, needsSetup, parseSubscriberRow, stepValid } from "@/lib/plated/form";
 import { hallOrder, hallsFromRow, hallsToRow } from "@/lib/plated/halls";
 import {
@@ -166,6 +167,9 @@ describe("row <-> form", () => {
       favorites: [],
       schedule: { monday: { lunch: "12:00" } },
       active: true,
+      macros: null,
+      picks: DEFAULT_PICKS,
+      main_protein_g: 10,
     });
     expect(Object.keys(update)).not.toContain("ntfy_topic");
   });

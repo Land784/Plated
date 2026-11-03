@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { supabaseEnv } from "./env";
 
 /** Pages that need a signed-in person. */
-const APP_PATHS = ["/setup", "/settings", "/preview", "/connect"];
+const APP_PATHS = ["/setup", "/settings", "/nutrition", "/preview", "/connect"];
 
 const isAppPath = (path: string) => APP_PATHS.some((p) => path === p || path.startsWith(p + "/"));
 
