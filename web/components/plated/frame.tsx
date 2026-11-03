@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, SlidersHorizontal, Smartphone } from "lucide-react";
+import { Bell, Salad, SlidersHorizontal, Smartphone } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
@@ -56,6 +56,7 @@ export function Header({ paused, nav, onSignOut }: { paused?: boolean; nav?: boo
 
 const NAV = [
   { href: "/settings", label: "Settings", Icon: SlidersHorizontal },
+  { href: "/nutrition", label: "Nutrition", Icon: Salad },
   { href: "/preview", label: "Preview", Icon: Bell },
   { href: "/connect", label: "Connect", Icon: Smartphone },
 ] as const;
@@ -63,7 +64,7 @@ const NAV = [
 export function BottomNav() {
   const path = usePathname();
   return (
-    <nav className="sticky bottom-0 z-20 grid h-16 grid-cols-3 border-t bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:rounded-b-3xl lg:hidden">
+    <nav className="sticky bottom-0 z-20 grid h-16 grid-cols-4 border-t bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:rounded-b-3xl lg:hidden">
       {NAV.map(({ href, label, Icon }) => {
         const current = path === href;
         return (

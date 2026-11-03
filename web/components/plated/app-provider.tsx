@@ -89,7 +89,7 @@ async function load(): Promise<LoadState | null> {
 }
 
 /** Pages that edit the draft; on a desktop-width screen they get the live preview beside them. */
-const SPLIT_PATHS = ["/settings", "/setup"];
+const SPLIT_PATHS = ["/settings", "/setup", "/nutrition"];
 const WIDE = "(min-width: 1024px)";
 
 function useWide(): boolean {

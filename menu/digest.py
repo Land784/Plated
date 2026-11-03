@@ -34,8 +34,8 @@ from menu.allergens import has_known_allergen_data
 from menu.macros import nutrient_value
 from menu.models import DayMenu, MenuItem
 from menu.notifier import SEPARATOR, compose_body
-from menu.planner import MealPlan, PlannedItem, plan_meal
-from menu.users import MacrosConfig, PicksConfig, UserConfig
+from menu.planner import MealPlan, PlannedItem, plan_plate
+from menu.users import PicksConfig, UserConfig
 
 _WHITESPACE = re.compile(r"\s+")
 _LEADING_ARTICLE = re.compile(r"^the\s+")
@@ -421,59 +421,71 @@ def _picks_block(label: str, plan: MealPlan, picks: PicksConfig) -> list[str]:
     return lines
 
 
+def split_mains_and_sides(
+    day: DayMenu, rule: MainsRule, side_min_calories: float
+) -> tuple[list[MenuItem], list[MenuItem]]:
+    """A hall's mains (the push's mains rule) and sides, from every food station.
+
+    A side is any other item with at least ``side_min_calories`` reported
+    calories and not a bulk row.
+    """
+    mains: list[MenuItem] = []
+    sides: list[MenuItem] = []
+    for station in group_by_station(day):
+        if not is_food_station(station.name):
+            continue
+        station_main_items = station_mains(station, rule)
+        mains.extend(station_main_items)
+        for item in station.unique_items:
+            calories = nutrient_value(item, "calories")
+            if (
+                item not in station_main_items
+                and not _is_bulk(item, rule)
+                and calories is not None
+                and calories >= side_min_calories
+            ):
+                sides.append(item)
+    return mains, sides
+
+
 def plan_halls(
     halls: list[tuple[str, DayMenu | None]],
-    allowlist: list[str] | None,
-    macros: MacrosConfig,
+    targets: dict[str, float],
     picks: PicksConfig,
-    meal: str,
+    rule: MainsRule,
+    skip: set[str] | frozenset[str] = frozenset(),
 ) -> list[tuple[str, MealPlan]]:
-    """One combo per hall for ``meal``'s goals, skipping halls with none.
+    """One plate per hall from the whole hall's menu, skipping halls with none.
 
-    Picks come only from the allowlisted stations (every station when
-    ``allowlist`` is None), and each combo is planned from a single
-    hall's items.
+    Each plate is planned from a single hall's items; ``skip`` names
+    items already picked earlier the same day.
     """
-    goals = macros.for_meal(meal)
-    if not goals:
-        return []
-
     plans: list[tuple[str, MealPlan]] = []
     for label, day in halls:
         if day is None:
             continue
-        stations = group_by_station(day)
-        if allowlist is not None:
-            stations = filter_stations(stations, allowlist)
-        items = [item for station in stations for item in station.items]
-        plan = plan_meal(
-            items,
-            goals,
+        mains, sides = split_mains_and_sides(day, rule, picks.side_min_calories)
+        plan = plan_plate(
+            mains,
+            sides,
+            targets,
+            tolerance_pct=picks.tolerance_pct,
+            max_main_servings=picks.max_main_servings,
             excluded_allergens=set(picks.exclude_allergens),
             unknown_policy=picks.unknown_allergens,
-            min_item_protein_g=picks.min_item_protein_g,
-            max_item_calories=picks.max_item_calories,
-            max_servings_per_item=picks.max_servings_per_item,
-            max_total_servings=picks.max_total_servings,
+            skip=skip,
         )
         if plan.items:
             plans.append((label, plan))
     return plans
 
 
-def build_picks_blocks(
-    halls: list[tuple[str, DayMenu | None]],
-    allowlist: list[str] | None,
-    macros: MacrosConfig,
-    picks: PicksConfig,
-    meal: str,
-) -> list[list[str]]:
-    """The PICKS blocks: one shared block when every hall's combo is identical.
+def build_picks_blocks(plans: list[tuple[str, MealPlan]], picks: PicksConfig) -> list[list[str]]:
+    """The PICKS blocks: one shared block when every hall's plate is identical.
 
     Identical means the same items, servings and per-serving values, so
     a merged block says exactly what each hall's would have.
     """
-    plans = plan_halls(halls, allowlist, macros, picks, meal)
     if len(plans) > 1 and len({_plan_key(plan) for _, plan in plans}) == 1:
         label = "both halls" if len(plans) == 2 else "all halls"
         return [_picks_block(label, plans[0][1], picks)]
@@ -556,6 +568,9 @@ def build_message(
     menus: dict[str, DayMenu | None],
     meal: str,
     budget: int = BODY_BUDGET_BYTES,
+    *,
+    skip: set[str] | frozenset[str] = frozenset(),
+    picked: set[str] | None = None,
 ) -> list[str]:
     """The message lines for one meal, or [] when no hall has station content.
 
@@ -563,6 +578,8 @@ def build_message(
     unpublished). Picks alone never make a message: they come from the
     same stations, so no station lines means no menu was published.
     The budget assumes the body is sent with ``full_menu_link(user)``.
+    ``skip`` names items picked earlier today; the names of this
+    message's picks are added to ``picked`` when given.
     """
     rule = MainsRule(
         min_protein_g=user.main_protein_g,
@@ -585,9 +602,12 @@ def build_message(
         return []
 
     picks: list[list[str]] = []
-    if user.macros is not None:
+    if user.picks_on:
         halls = [(hall_label(slug), menus.get(slug)) for slug in user.halls]
-        picks = build_picks_blocks(halls, user.stations, user.macros, user.picks, meal)
+        plans = plan_halls(halls, user.macros, user.picks, rule, skip)
+        picks = build_picks_blocks(plans, user.picks)
+        if picked is not None:
+            picked.update(_name(p.item) for _, plan in plans for p in plan.items)
     # Each glance line is its own paragraph, so the second hall's line
     # isn't lost under the first one's wrap.
     head = [*([line] for line in glance), *picks]

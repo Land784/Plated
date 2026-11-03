@@ -20,14 +20,14 @@ from menu.digest import (
     meal_tags,
     normalize_station,
     notification_title,
+    plan_halls,
     station_lineup,
     station_mains,
     stations_in_allowlist_order,
 )
-from menu.macros import Goal
 from menu.models import DayMenu, WeekMenu
 from menu.notifier import SEPARATOR, compose_body
-from menu.users import MacrosConfig, PicksConfig, parse_user
+from menu.users import PicksConfig, parse_user
 
 FIXTURES = Path(__file__).parent / "fixtures"
 # The example subscriber's allowlist, in its order.
@@ -264,14 +264,12 @@ def test_main_protein_floor_is_per_subscriber():
     assert station_lineup(_station(NORTH, "Mezze"), rule) == ["Pork Tenderloin Agrodolce"]
 
 
-def test_mains_rule_does_not_change_picks_eligibility():
-    # Quinoa (15g) is a main at the default floor, and a pick candidate
-    # only at the planner's own floor, which the mains rule never reads.
-    macros = MacrosConfig(goals={"protein": Goal(min=15)})
-    picks = PicksConfig(min_item_protein_g=16, max_servings_per_item=1, max_total_servings=1)
+def test_the_mains_rule_decides_what_can_be_a_plate_s_main():
+    # Quinoa (15g) is a main at the default floor and so can anchor a plate;
+    # at a 16g floor it is only a side, and a plate needs a main.
     day = _day([_header("Mezze"), _food("Quinoa", 15, 403)])
-    assert station_lineup(group_by_station(day)[0], RULE) == ["Quinoa"]
-    assert build_picks_blocks([("North", day)], ["Mezze"], macros, picks, "dinner") == []
+    assert _picks([("North", day)], {"protein": 15})[0][1] == "Quinoa · 15P · 403 cal"
+    assert _picks([("North", day)], {"protein": 15}, rule=MainsRule(16, 1200, 3)) == []
 
 
 # --- glance and station order ---
@@ -320,46 +318,60 @@ def test_stations_follow_the_allowlist_order_and_keep_published_names():
 
 # --- picks ---
 
-PROTEIN_70 = MacrosConfig(goals={"protein": Goal(target=70)})
+PROTEIN_70 = {"protein": 70}
 
 
-def _picks(halls, allowlist=STATIONS, macros=PROTEIN_70, picks=None, meal="dinner"):
-    return build_picks_blocks(halls, allowlist, macros, picks or PicksConfig(), meal)
+def _picks(halls, targets=PROTEIN_70, picks=None, rule=RULE, skip=frozenset()):
+    picks = picks or PicksConfig(enabled=True)
+    return build_picks_blocks(plan_halls(halls, targets, picks, rule, skip), picks)
 
 
-def test_identical_hall_combos_merge_into_one_block():
-    assert _picks([("North", NORTH), ("South", SOUTH)]) == [
-        [
-            "PICKS · both halls · 78P 12C 16F · 513 cal",
-            "2× Garden Herb Grilled Chicken · 42P · 178 cal",
-            "Pork Tenderloin Agrodolce · 36P · 335 cal",
-        ]
+def test_identical_hall_plates_merge_into_one_block():
+    day = _day([_header("Grill"), _food("Chicken", 35, 300, ["Soy"])])
+    assert _picks([("North", day), ("South", day)]) == [
+        ["PICKS · both halls · 70P 0C 0F · 600 cal", "2× Chicken · 70P · 600 cal"]
     ]
 
 
-def test_different_combos_get_a_block_per_hall_with_misses():
+def test_real_dinner_plates_with_a_lone_protein_target():
+    # Closest to 70g protein, whatever the calories: set a calories
+    # target too to keep plates this size in check.
+    assert _picks([("North", NORTH), ("South", SOUTH)]) == [
+        [
+            "PICKS · North · 70P 178C 35.8F · 1317 cal",
+            "Cantina Sandwich · 56P · 770 cal",
+            "Steamed Jasmine Rice · 8P · 402 cal",
+            "Falafel · 6P · 145 cal",
+        ],
+        [
+            "PICKS · South · 70P 92C 50F · 1165 cal",
+            "2× Mushroom Florentine Pork Chops · 62P · 762 cal",
+            "Long Grain Rice · 8P · 403 cal",
+        ],
+    ]
+
+
+def test_different_plates_get_a_block_per_hall_with_misses():
     north = _day([_header("Grill"), _food("North Chicken", 40, 300, ["Soy"])])
     south = _day([_header("Grill"), _food("South Steak", 30, 400, ["Dairy"])])
-    macros = MacrosConfig(goals={"protein": Goal(min=100)})
-    assert _picks([("North", north), ("South", south)], ["Grill"], macros=macros) == [
+    assert _picks([("North", north), ("South", south)], {"protein": 100}) == [
         [
             "PICKS · North · 80P 0C 0F · 600 cal",
             "2× North Chicken · 80P · 600 cal",
-            "closest: protein 80g (want ≥100g)",
+            "closest: protein 80g (want 85-115g)",
         ],
         [
             "PICKS · South · 60P 0C 0F · 800 cal",
             "2× South Steak · 60P · 800 cal",
-            "closest: protein 60g (want ≥100g)",
+            "closest: protein 60g (want 85-115g)",
         ],
     ]
 
 
-def test_same_combo_with_different_allergen_tags_is_not_merged():
+def test_same_plate_with_different_allergen_tags_is_not_merged():
     north = _day([_header("Grill"), _food("Chicken", 40, 300, ["Soy"])])
     south = _day([_header("Grill"), _food("Chicken", 40, 300, ["High Performance"])])
-    macros = MacrosConfig(goals={"protein": Goal(min=80)})
-    blocks = _picks([("North", north), ("South", south)], ["Grill"], macros=macros)
+    blocks = _picks([("North", north), ("South", south)], {"protein": 80})
     assert [block[0] for block in blocks] == [
         "PICKS · North · 80P 0C 0F · 600 cal",
         "PICKS · South · 80P 0C 0F · 600 cal",
@@ -367,19 +379,46 @@ def test_same_combo_with_different_allergen_tags_is_not_merged():
 
 
 def test_one_hall_with_a_plan_is_named_not_merged():
-    assert _picks([("North", NORTH), ("South", None)])[0][0] == (
-        "PICKS · North · 78P 12C 16F · 513 cal"
+    assert _picks([("North", NORTH), ("South", None)])[0][0].startswith("PICKS · North · ")
+
+
+def test_a_plate_takes_sides_from_any_food_station_in_the_hall():
+    day = _day(
+        [
+            _header("Grill"),
+            _food("Chicken", 40, 300, ["Soy"]),
+            _header("Starches"),
+            _food("Rice", 5, 220, ["Soy"]),
+            _food("Pinch of Herbs", 1, 5, ["Soy"]),
+            _food("Whole Sheet Cake", 20, 4000, ["Egg"]),
+            _header("Condiments"),
+            _food("Ranch Cup", 1, 140, ["Dairy"]),
+        ]
     )
+    [block] = _picks([("North", day)], {"protein": 45, "calories": 520})
+    assert block == [
+        "PICKS · North · 45P 0C 0F · 520 cal",
+        "Chicken · 40P · 300 cal",
+        "Rice · 5P · 220 cal",
+    ]
+
+
+def test_items_picked_earlier_today_are_skipped():
+    day = _day(
+        [_header("Grill"), _food("Chicken", 40, 300, ["Soy"]), _food("Steak", 35, 400, ["Soy"])]
+    )
+    [block] = _picks([("North", day)], {"protein": 40}, skip={"Chicken"})
+    assert block[1].startswith("Steak")
 
 
 def test_unknown_allergens_are_flagged_only_when_excluding_allergens():
-    picks = PicksConfig(exclude_allergens=["Peanuts"])
-    [block] = _picks([("North", NORTH), ("South", SOUTH)], picks=picks)
-    # Grilled Chicken's only tag is the dietary label "High Performance".
-    assert block[1:] == [
-        "2× Garden Herb Grilled Chicken · 42P · 178 cal · allergens unknown",
-        "Pork Tenderloin Agrodolce · 36P · 335 cal",
-    ]
+    day = _day([_header("Grill"), _food("Chicken", 40, 300, ["High Performance"])])
+    plain = _picks([("North", day)], {"protein": 40})
+    flagged = _picks(
+        [("North", day)], {"protein": 40}, PicksConfig(enabled=True, exclude_allergens=["Peanuts"])
+    )
+    assert plain[0][1] == "Chicken · 40P · 300 cal"
+    assert flagged[0][1] == "Chicken · 40P · 300 cal · allergens unknown"
 
 
 def test_a_missing_nutrient_prints_a_question_mark():
@@ -395,22 +434,8 @@ def test_a_missing_nutrient_prints_a_question_mark():
             },
         ]
     )
-    macros = MacrosConfig(goals={"protein": Goal(min=60)})
-    [block] = _picks([("North", day)], ["Grill"], macros=macros)
+    [block] = _picks([("North", day)], {"protein": 70})
     assert block[:2] == ["PICKS · North · 70P ?C ?F · 600 cal", "2× Mystery Meat · 70P · 600 cal"]
-
-
-def test_meal_override_goals_are_used_for_that_meal():
-    macros = MacrosConfig(
-        goals={"protein": Goal(target=70)}, meals={"brunch": {"protein": Goal(target=30)}}
-    )
-    [block] = _picks([("North", NORTH)], macros=macros, meal="brunch")
-    assert block[0].startswith("PICKS · North · 3")
-
-
-def test_no_goals_for_a_meal_means_no_picks():
-    macros = MacrosConfig(meals={"dinner": {"protein": Goal(min=40)}})
-    assert _picks([("North", NORTH)], macros=macros, meal="lunch") == []
 
 
 def test_excluded_allergens_are_dropped_from_picks():
@@ -423,17 +448,11 @@ def test_excluded_allergens_are_dropped_from_picks():
     )
     blocks = _picks(
         [("North", day)],
-        ["Grill"],
-        macros=MacrosConfig(goals={"protein": Goal(min=30)}),
-        picks=PicksConfig(exclude_allergens=["shellfish"]),
+        {"protein": 30},
+        PicksConfig(enabled=True, exclude_allergens=["shellfish"]),
     )
     assert "Shrimp Bowl" not in str(blocks)
     assert "Chicken Bowl · 30P · 300 cal" in blocks[0]
-
-
-def test_picks_only_draw_from_allowlisted_stations():
-    # Crust & Co's only rows are bulk whole pizzas, none of them rankable.
-    assert _picks([("North", NORTH)], ["Crust & Co"]) == []
 
 
 def test_picks_skip_halls_with_no_menu():
@@ -450,7 +469,8 @@ def _user(**overrides):
             "ntfy_topic": "topic-abc",
             "stations": STATIONS,
             "max_items_per_station": 3,
-            "macros": {"protein": {"target": 70}},
+            "macros": {"protein": 70},
+            "picks": {"enabled": True},
             **overrides,
         },
         "test",
@@ -464,9 +484,14 @@ def test_real_dinner_message():
         "South: Pork Tenderloin Agrodolce, Mushroom Florentine Pork Chops, "
         "Pepperoni & Cheese French Bread Pizza",
         "",
-        "PICKS · both halls · 78P 12C 16F · 513 cal",
-        "2× Garden Herb Grilled Chicken · 42P · 178 cal",
-        "Pork Tenderloin Agrodolce · 36P · 335 cal",
+        "PICKS · North · 70P 178C 35.8F · 1317 cal",
+        "Cantina Sandwich · 56P · 770 cal",
+        "Steamed Jasmine Rice · 8P · 402 cal",
+        "Falafel · 6P · 145 cal",
+        "",
+        "PICKS · South · 70P 92C 50F · 1165 cal",
+        "2× Mushroom Florentine Pork Chops · 62P · 762 cal",
+        "Long Grain Rice · 8P · 403 cal",
         "",
         SEPARATOR,
         "NORTH FULL MENU",
@@ -517,6 +542,20 @@ def test_subscriber_without_macros_gets_no_picks():
     assert lines[5] == "NORTH FULL MENU"
 
 
+def test_picks_switched_off_keep_the_targets_but_send_no_picks():
+    lines = build_message(_user(picks={"enabled": False}), MENUS, "dinner")
+    assert not any(line.startswith("PICKS") for line in lines)
+
+
+def test_build_message_reports_and_skips_picked_names():
+    picked: set[str] = set()
+    first = build_message(_user(), MENUS, "dinner", picked=picked)
+    assert picked and all(name in "\n".join(first) for name in picked)
+    again = build_message(_user(), MENUS, "dinner", skip=picked)
+    plate = again[again.index(next(line for line in again if line.startswith("PICKS"))) :]
+    assert not any(name in line for name in picked for line in plate[1:4])
+
+
 def test_hall_order_follows_the_subscriber():
     lines = build_message(_user(halls=["south-dining-hall", "north-dining-hall"]), MENUS, "dinner")
     assert lines[0].startswith("South: ")
@@ -529,7 +568,7 @@ def test_hall_without_a_menu_is_left_out():
     )
     assert lines[0].startswith("South: ")
     assert "NORTH FULL MENU" not in lines
-    assert lines[2] == "PICKS · South · 78P 12C 16F · 513 cal"
+    assert lines[2] == "PICKS · South · 70P 92C 50F · 1165 cal"
 
 
 def test_no_station_content_means_no_message():

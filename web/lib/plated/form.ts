@@ -3,6 +3,7 @@
 
 import { HALL_LABEL, type HallKey, type HallSlug } from "./constants";
 import { hallOrder, hallsFromRow, hallsToRow, type HallChoice } from "./halls";
+import { macrosToRow, nutritionFromRow, type Nutrient, type Nutrition, type Picks } from "./nutrition";
 import {
   CHIPS,
   anyMealOn,
@@ -25,7 +26,7 @@ import { fmt12, zoneLabel } from "./time";
 
 /** The columns the app reads. */
 export const SUBSCRIBER_COLUMNS =
-  "id, name, halls, stations, favorites, schedule, active, ntfy_topic, timezone, created_at, updated_at";
+  "id, name, halls, stations, favorites, schedule, active, ntfy_topic, timezone, created_at, updated_at, macros, picks, main_protein_g";
 
 export type SubscriberRow = {
   id: string;
@@ -39,6 +40,9 @@ export type SubscriberRow = {
   timezone: string;
   created_at: string | null;
   updated_at: string | null;
+  macros: unknown;
+  picks: unknown;
+  main_protein_g: unknown;
 };
 
 /** The columns the app writes; ntfy_topic is never among them. */
@@ -49,6 +53,9 @@ export type SubscriberUpdate = {
   favorites: string[];
   schedule: RowSchedule;
   active: boolean;
+  macros: Partial<Record<Nutrient, number>> | null;
+  picks: Picks;
+  main_protein_g: number;
 };
 
 const strings = (v: unknown): string[] =>
@@ -71,6 +78,9 @@ export function parseSubscriberRow(raw: unknown): SubscriberRow | null {
     timezone: typeof r.timezone === "string" && r.timezone ? r.timezone : "America/New_York",
     created_at: typeof r.created_at === "string" ? r.created_at : null,
     updated_at: typeof r.updated_at === "string" ? r.updated_at : null,
+    macros: r.macros ?? null,
+    picks: r.picks ?? null,
+    main_protein_g: r.main_protein_g ?? null,
   };
 }
 
@@ -82,6 +92,7 @@ export type FormState = {
   scheduleExtra: RowSchedule;
   stations: StationSelection;
   active: boolean;
+  nutrition: Nutrition;
 };
 
 export function formFromRow(row: SubscriberRow, catalog: CatalogStation[]): FormState {
@@ -95,6 +106,7 @@ export function formFromRow(row: SubscriberRow, catalog: CatalogStation[]): Form
     scheduleExtra: extra,
     stations: selectionFromRow(row.stations, row.favorites, catalog),
     active: row.active,
+    nutrition: nutritionFromRow(row.macros, row.picks, row.main_protein_g),
   };
 }
 
@@ -113,6 +125,9 @@ export function formToUpdate(form: FormState, catalog: CatalogStation[]): Subscr
     favorites: deriveFavorites(catalog, form.stations),
     schedule: scheduleToRow(form.days, form.scheduleExtra),
     active: form.active,
+    macros: macrosToRow(form.nutrition.targets),
+    picks: form.nutrition.picks,
+    main_protein_g: form.nutrition.mainProteinG,
   };
 }
 

@@ -42,9 +42,9 @@ def _serve(monkeypatch, day: DayMenu | None) -> None:
 
 def test_picks_follow_the_glance(monkeypatch):
     _serve(monkeypatch, MENU)
-    user = parse_user({**USER, "macros": {"protein": {"target": 40}}}, "test")
+    user = parse_user({**USER, "macros": {"protein": 40}, "picks": {"enabled": True}}, "test")
 
-    lines = cli._build_message(user, "dinner", date(2026, 9, 24))
+    lines = cli._build_message(user, "dinner", date(2026, 9, 24), set(), set())
 
     assert lines == [
         "North: Grilled Chicken",
@@ -62,7 +62,7 @@ def test_subscriber_without_macros_gets_the_plain_digest(monkeypatch):
     _serve(monkeypatch, MENU)
     user = parse_user(USER, "test")
 
-    lines = cli._build_message(user, "dinner", date(2026, 9, 24))
+    lines = cli._build_message(user, "dinner", date(2026, 9, 24), set(), set())
 
     assert lines == [
         "North: Grilled Chicken",
@@ -75,9 +75,9 @@ def test_subscriber_without_macros_gets_the_plain_digest(monkeypatch):
 
 def test_no_published_menu_means_no_message(monkeypatch):
     _serve(monkeypatch, None)
-    user = parse_user({**USER, "macros": {"protein": {"target": 40}}}, "test")
+    user = parse_user({**USER, "macros": {"protein": 40}, "picks": {"enabled": True}}, "test")
 
-    assert cli._build_message(user, "dinner", date(2026, 9, 24)) == []
+    assert cli._build_message(user, "dinner", date(2026, 9, 24), set(), set()) == []
 
 
 class _Recorder:
@@ -93,13 +93,31 @@ class _Recorder:
         menus_stored=True,
         store_problems=(),
         bad_rows=(),
+        user_extra=None,
+        earlier_picks=(),
     ):
         self.claims: list[tuple] = []
         self.releases: list[tuple] = []
         self.sent: list[dict] = []
         self.stored: list[date] = []
+        self.recorded: list[tuple] = []
+        self.messages: list[str] = []
         user = parse_user(
-            {**USER, "id": "3f1c", "schedule": {"friday": {"lunch": "11:15"}}}, "test"
+            {
+                **USER,
+                "id": "3f1c",
+                "schedule": {"friday": {"lunch": "11:15"}},
+                **(user_extra or {}),
+            },
+            "test",
+        )
+        monkeypatch.setattr(
+            cli.supabase_users, "picked_today", lambda url, key, sid, d: set(earlier_picks)
+        )
+        monkeypatch.setattr(
+            cli.supabase_users,
+            "record_picks",
+            lambda url, key, *parts: self.recorded.append(parts),
         )
         monkeypatch.setattr(cli.supabase_users, "credentials_from_env", lambda: ("url", "key"))
         monkeypatch.setattr(
@@ -120,6 +138,7 @@ class _Recorder:
             if send_fails:
                 raise RuntimeError("ntfy down")
             self.sent.append({"title": title, **headers})
+            self.messages.append(message)
 
         monkeypatch.setattr(cli.NtfyNotifier, "send", send)
 
@@ -151,6 +170,28 @@ def test_a_claimed_meal_is_sent_once(monkeypatch):
             "link": "https://nd.nutrislice.com/menu/north-dining-hall/",
         }
     ]
+
+
+PICKS_ON = {"macros": {"protein": 40}, "picks": {"enabled": True}}
+
+
+def test_a_sent_meal_records_its_picks(monkeypatch):
+    rec = _Recorder(monkeypatch, user_extra=PICKS_ON)
+    assert rec.run() == 0
+    assert rec.recorded == [("3f1c", "lunch", date(2026, 9, 25), {"Grilled Chicken"})]
+
+
+def test_items_picked_earlier_today_are_not_picked_again(monkeypatch):
+    rec = _Recorder(monkeypatch, user_extra=PICKS_ON, earlier_picks={"Grilled Chicken"})
+    assert rec.run() == 0
+    assert "PICKS" not in rec.messages[0]
+    assert rec.recorded == []
+
+
+def test_without_picks_nothing_is_recorded(monkeypatch):
+    rec = _Recorder(monkeypatch)
+    assert rec.run() == 0
+    assert rec.recorded == []
 
 
 def test_a_meal_already_claimed_by_an_earlier_run_is_skipped(monkeypatch):

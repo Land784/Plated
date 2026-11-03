@@ -21,8 +21,7 @@ from datetime import date
 
 import httpx
 
-from menu.macros import Goal
-from menu.users import MacrosConfig, UserConfig, UserConfigError, parse_user
+from menu.users import UserConfig, UserConfigError, parse_user
 
 URL_ENV = "SUPABASE_URL"
 KEY_ENV = "SUPABASE_SECRET_KEY"
@@ -142,28 +141,6 @@ def load_users_from_supabase(
     return users, problems
 
 
-def _goal_to_json(goal: Goal) -> dict:
-    return {
-        key: value
-        for key, value in (
-            ("target", goal.target),
-            ("min", goal.min),
-            ("max", goal.max),
-            ("tolerance", goal.tolerance),
-        )
-        if value is not None
-    }
-
-
-def _macros_to_json(macros: MacrosConfig | None) -> dict | None:
-    if macros is None:
-        return None
-    data: dict = {nutrient: _goal_to_json(goal) for nutrient, goal in macros.goals.items()}
-    for meal, goals in macros.meals.items():
-        data[meal] = {nutrient: _goal_to_json(goal) for nutrient, goal in goals.items()}
-    return data
-
-
 def user_to_row(user: UserConfig) -> dict:
     """Serialize a validated config into a ``subscribers`` row."""
     picks = user.picks
@@ -180,12 +157,13 @@ def user_to_row(user: UserConfig) -> dict:
             day: {meal: f"{at:%H:%M}" for meal, at in meals.items()}
             for day, meals in user.schedule.items()
         },
-        "macros": _macros_to_json(user.macros),
+        "macros": user.macros or None,
         "picks": {
-            "min_item_protein_g": picks.min_item_protein_g,
+            "enabled": picks.enabled,
+            "tolerance_pct": picks.tolerance_pct,
+            "side_min_calories": picks.side_min_calories,
+            "max_main_servings": picks.max_main_servings,
             "max_item_calories": picks.max_item_calories,
-            "max_servings_per_item": picks.max_servings_per_item,
-            "max_total_servings": picks.max_total_servings,
             "exclude_allergens": picks.exclude_allergens,
             "unknown_allergens": picks.unknown_allergens.value,
         },
@@ -302,3 +280,56 @@ def release_send(
         if client is None:
             http.close()
     raise_for_status(response, f"releasing {meal} on {local_date}")
+
+
+def picked_today(
+    url: str,
+    key: str,
+    subscriber_id: str,
+    local_date: date,
+    *,
+    client: httpx.Client | None = None,
+) -> set[str]:
+    """Names of items already sent as picks to this subscriber on ``local_date``."""
+    http = client or httpx.Client(timeout=TIMEOUT)
+    try:
+        response = http.get(
+            f"{url}/rest/v1/{SENT_TABLE}",
+            params={
+                "select": "picked",
+                "subscriber_id": f"eq.{subscriber_id}",
+                "local_date": f"eq.{local_date.isoformat()}",
+            },
+            headers=api_headers(key),
+        )
+    finally:
+        if client is None:
+            http.close()
+    raise_for_status(response, f"reading picks for {local_date}")
+    return {name for row in response.json() for name in row.get("picked") or []}
+
+
+def record_picks(
+    url: str,
+    key: str,
+    subscriber_id: str,
+    meal: str,
+    local_date: date,
+    names: set[str],
+    *,
+    client: httpx.Client | None = None,
+) -> None:
+    """Save a sent meal's picked item names on its claim row."""
+    params = {k: f"eq.{v}" for k, v in _sent_key(subscriber_id, meal, local_date).items()}
+    http = client or httpx.Client(timeout=TIMEOUT)
+    try:
+        response = http.patch(
+            f"{url}/rest/v1/{SENT_TABLE}",
+            params=params,
+            json={"picked": sorted(names)},
+            headers=api_headers(key),
+        )
+    finally:
+        if client is None:
+            http.close()
+    raise_for_status(response, f"recording picks for {meal} on {local_date}")

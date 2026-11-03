@@ -11,7 +11,7 @@ import {
   type HallSlug,
   type Meal,
 } from "./constants";
-import { formToUpdate, type FormState } from "./form";
+import { formToUpdate, type FormState, type SubscriberUpdate } from "./form";
 import { nextScheduled } from "./schedule";
 import type { CatalogStation } from "./stations";
 import { dayKeyOf, fmtTitleDate, isIsoDate, weekEndOf, type ZonedNow } from "./time";
@@ -19,7 +19,7 @@ import { dayKeyOf, fmtTitleDate, isIsoDate, weekEndOf, type ZonedNow } from "./t
 export const PREVIEW_ENDPOINT = "/api/preview";
 
 /** `POST /api/preview` body, per the frontend spec's contract. */
-export type PreviewRequest = {
+export type PreviewRequest = Pick<SubscriberUpdate, "macros" | "picks" | "main_protein_g"> & {
   halls: HallSlug[];
   stations: string[];
   meal: Meal;
@@ -37,8 +37,8 @@ export function buildPreviewRequest(
   meal: Meal,
   date: string,
 ): PreviewRequest {
-  const update = formToUpdate(form, catalog);
-  return { halls: update.halls, stations: update.stations, meal, date };
+  const { halls, stations, macros, picks, main_protein_g } = formToUpdate(form, catalog);
+  return { halls, stations, macros, picks, main_protein_g, meal, date };
 }
 
 export function utf8Bytes(s: string): number {

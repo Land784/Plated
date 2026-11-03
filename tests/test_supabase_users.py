@@ -29,8 +29,8 @@ ROW = {
     "max_items_per_station": 4,
     "main_protein_g": 12,
     "schedule": {"monday": {"lunch": "11:15"}},
-    "macros": {"protein": {"target": 70}, "brunch": {"protein": {"target": 50}}},
-    "picks": {"max_servings_per_item": 3},
+    "macros": {"protein": 70},
+    "picks": {"enabled": True, "max_main_servings": 3},
 }
 
 
@@ -146,7 +146,8 @@ def test_upsert_writes_every_column_matched_on_topic():
     # Written explicitly so re-pushing a file without [macros] clears it.
     assert body["macros"] is None
     # Picks defaults are written out in full.
-    assert body["picks"]["max_servings_per_item"] == 2
+    assert body["picks"]["max_main_servings"] == 2
+    assert body["picks"]["enabled"] is False
     assert body["halls"] == ["north-dining-hall", "south-dining-hall"]
 
 
@@ -154,15 +155,12 @@ def test_row_round_trips_through_parse_user():
     user = parse_user(
         {
             **ROW,
-            "macros": {
-                "protein": {"target": 70, "tolerance": 5},
-                "fat": {"max": 30},
-                "fiber": {"min": 8},
-                "brunch": {"protein": {"target": 50}},
-            },
+            "macros": {"protein": 70, "fat": 30, "calories": 700},
             "picks": {
+                "enabled": True,
+                "tolerance_pct": 10,
+                "side_min_calories": 80,
                 "max_item_calories": 900,
-                "max_total_servings": 5,
                 "exclude_allergens": ["Peanuts"],
                 "unknown_allergens": "exclude",
             },
@@ -320,3 +318,37 @@ def test_cli_push_passes_force(monkeypatch, tmp_path):
     assert seen == {"force": False}
     assert cli.main(["subscribers", "push", "--force", str(path)]) == 0
     assert seen == {"force": True}
+
+
+def test_picked_today_collects_names_from_that_day_s_rows():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["subscriber_id"] == "eq.sub-1"
+        assert request.url.params["local_date"] == "eq.2026-11-02"
+        return httpx.Response(200, json=[{"picked": ["Chicken", "Rice"]}, {"picked": None}])
+
+    names = supabase_users.picked_today(
+        URL, SECRET, "sub-1", date(2026, 11, 2), client=_client(handler)
+    )
+    assert names == {"Chicken", "Rice"}
+
+
+def test_record_picks_patches_the_claim_row():
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(204)
+
+    supabase_users.record_picks(
+        URL,
+        SECRET,
+        "sub-1",
+        "lunch",
+        date(2026, 11, 2),
+        {"Rice", "Chicken"},
+        client=_client(handler),
+    )
+    [request] = seen
+    assert request.method == "PATCH"
+    assert request.url.params["meal"] == "eq.lunch"
+    assert json.loads(request.content) == {"picked": ["Chicken", "Rice"]}

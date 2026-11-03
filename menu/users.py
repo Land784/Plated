@@ -24,13 +24,11 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from menu.allergens import UnknownAllergenPolicy
-from menu.macros import NUTRIENTS, Goal
+from menu.macros import DEFAULT_TOLERANCE_PCT, NUTRIENTS
 from menu.planner import (
     DEFAULT_MAX_ITEM_CALORIES,
-    DEFAULT_MAX_SERVINGS_PER_ITEM,
-    DEFAULT_MAX_TOTAL_SERVINGS,
-    DEFAULT_MIN_ITEM_PROTEIN_G,
-    MAX_TOTAL_SERVINGS_LIMIT,
+    DEFAULT_MAX_MAIN_SERVINGS,
+    DEFAULT_SIDE_MIN_CALORIES,
 )
 
 WEEKDAYS = (
@@ -45,9 +43,8 @@ WEEKDAYS = (
 
 DEFAULT_TIMEZONE = "America/New_York"
 DEFAULT_MAX_ITEMS = 3
-# A notification lists an item as a station's main at this much protein
-# per listed serving (see menu/digest.py). Display only; picks have
-# their own floor in [picks].
+# An item is a main at this much protein per listed serving (see
+# menu/digest.py): in station lines and as the main of a picked plate.
 DEFAULT_MAIN_PROTEIN_G = 10.0
 DEFAULT_HALLS = ("north-dining-hall", "south-dining-hall")
 
@@ -56,38 +53,28 @@ class UserConfigError(ValueError):
     """Raised when a subscriber file is malformed."""
 
 
-GOAL_KEYS = ("target", "min", "max", "tolerance")
-
-
-@dataclass
-class MacrosConfig:
-    """The ``[macros]`` table: nutrient goals that turn on meal picks.
-
-    ``goals`` apply to every meal. ``meals`` holds per-meal overrides
-    (``[macros.brunch]``), merged over ``goals`` one nutrient at a time,
-    so an override that only sets protein keeps the default fat limit.
-    """
-
-    goals: dict[str, Goal] = field(default_factory=dict)
-    meals: dict[str, dict[str, Goal]] = field(default_factory=dict)
-
-    def for_meal(self, meal: str) -> dict[str, Goal]:
-        return {**self.goals, **self.meals.get(meal, {})}
+MAX_MAIN_SERVINGS_LIMIT = 3
+# Plate rules replaced these; rows saved before the planner rebuild still
+# carry them, so they are ignored rather than rejected.
+RETIRED_PICKS_KEYS = frozenset(
+    {"min_item_protein_g", "max_servings_per_item", "max_total_servings"}
+)
 
 
 @dataclass
 class PicksConfig:
-    """The ``[picks]`` table: how picks are chosen, not what they aim for.
+    """The ``[picks]`` table: whether picks are on and how plates are built.
 
-    Every field has a default, so the table is optional. The protein
-    floor and calorie ceiling are the planner's eligibility rules (see
-    menu/planner.py for why they exist).
+    Every field has a default, so the table is optional. What a plate
+    aims for is ``[macros]``; see menu/planner.py for the plate rules.
     """
 
-    min_item_protein_g: float = DEFAULT_MIN_ITEM_PROTEIN_G
+    enabled: bool = False
+    tolerance_pct: float = DEFAULT_TOLERANCE_PCT
+    side_min_calories: float = DEFAULT_SIDE_MIN_CALORIES
+    max_main_servings: int = DEFAULT_MAX_MAIN_SERVINGS
+    # Rows over this are bulk recipe quantities, never mains or sides.
     max_item_calories: float | None = DEFAULT_MAX_ITEM_CALORIES
-    max_servings_per_item: int = DEFAULT_MAX_SERVINGS_PER_ITEM
-    max_total_servings: int = DEFAULT_MAX_TOTAL_SERVINGS
     exclude_allergens: list[str] = field(default_factory=list)
     unknown_allergens: UnknownAllergenPolicy = UnknownAllergenPolicy.FLAG
 
@@ -109,9 +96,13 @@ class UserConfig:
     main_protein_g: float = DEFAULT_MAIN_PROTEIN_G
     # weekday -> meal slug -> local send time
     schedule: dict[str, dict[str, time]] = field(default_factory=dict)
-    # None means no meal picks, just the station digest.
-    macros: MacrosConfig | None = None
+    # Per-meal targets by nutrient (protein, carbs, fat, calories).
+    macros: dict[str, float] = field(default_factory=dict)
     picks: PicksConfig = field(default_factory=PicksConfig)
+
+    @property
+    def picks_on(self) -> bool:
+        return self.picks.enabled and bool(self.macros)
 
     @property
     def zoneinfo(self) -> ZoneInfo:
@@ -172,71 +163,25 @@ def _parse_whole(raw: object, where: str, *, low: int, high: int) -> int:
     return raw
 
 
-def _parse_goal(raw: object, where: str) -> Goal:
-    if not isinstance(raw, dict):
-        raise UserConfigError(f"{where}: expected a table like {{ target = 70 }}, got {raw!r}")
-    unknown = set(raw) - set(GOAL_KEYS)
-    if unknown:
-        raise UserConfigError(
-            f"{where}: unknown key(s) {', '.join(sorted(unknown))}; use {', '.join(GOAL_KEYS)}"
-        )
-    if not raw.keys() & {"target", "min", "max"}:
-        raise UserConfigError(f"{where}: needs at least one of target, min, max")
-
-    parts = {
-        key: _parse_number(raw[key], f"{where} {key}", allow_zero=key != "target")
-        for key in GOAL_KEYS
-        if key in raw
-    }
-    if "tolerance" in parts and "target" not in parts:
-        raise UserConfigError(f"{where}: tolerance only applies to a target")
-    goal = Goal(**parts)
-    low, high = goal.bounds()
-    if low > high:
-        raise UserConfigError(f"{where}: min, max and target leave no allowed range")
-    return goal
-
-
-def _parse_goal_table(raw: dict, where: str) -> dict[str, Goal]:
-    return {nutrient: _parse_goal(value, f"{where}.{nutrient}") for nutrient, value in raw.items()}
-
-
-def _parse_macros(raw: object, where: str) -> MacrosConfig | None:
+def _parse_macros(raw: object, where: str) -> dict[str, float]:
+    """``protein = 60`` style targets; a database null clears one."""
     if raw is None:
-        return None
+        return {}
     if not isinstance(raw, dict):
         raise UserConfigError(f"{where}: [macros] must be a table")
-
     nutrients = ", ".join(NUTRIENTS)
-    config = MacrosConfig()
+    targets: dict[str, float] = {}
     for key, value in raw.items():
-        if key in NUTRIENTS:
-            config.goals[key] = _parse_goal(value, f"{where} macros.{key}")
-        elif isinstance(value, dict) and value and set(value) <= set(NUTRIENTS):
-            # A meal override such as [macros.brunch]. Meal slugs are not
-            # validated, matching [schedule].
-            config.meals[key.strip().lower()] = _parse_goal_table(value, f"{where} macros.{key}")
-        elif isinstance(value, dict) and set(value) <= set(GOAL_KEYS):
+        if key not in NUTRIENTS:
+            raise UserConfigError(f"{where}: macros.{key} is not a target; choose from {nutrients}")
+        if isinstance(value, dict):
             raise UserConfigError(
-                f"{where}: macros.{key} is not a nutrient; choose from {nutrients}"
+                f"{where}: macros.{key} is now a plain number (protein = 60); "
+                "min/max goals were removed"
             )
-        else:
-            raise UserConfigError(
-                f"{where}: macros.{key} must be a nutrient goal or a meal override whose "
-                f"keys are nutrients ({nutrients})"
-            )
-
-    sets = {"[macros]": config.goals} if config.goals else {}
-    sets.update({f"[macros.{m}]": config.for_meal(m) for m in config.meals})
-    if not sets:
-        raise UserConfigError(f"{where}: [macros] has no goals")
-    for label, goals in sets.items():
-        if not any(g.drives_picks for g in goals.values()):
-            raise UserConfigError(
-                f"{where}: {label} needs at least one target or min; "
-                "limits alone are met by eating nothing"
-            )
-    return config
+        if value is not None:
+            targets[key] = _parse_number(value, f"{where} macros.{key}", allow_zero=False)
+    return targets
 
 
 def _parse_picks(raw: object, where: str) -> PicksConfig:
@@ -245,7 +190,7 @@ def _parse_picks(raw: object, where: str) -> PicksConfig:
     if not isinstance(raw, dict):
         raise UserConfigError(f"{where}: [picks] must be a table")
     known = set(PicksConfig.__dataclass_fields__)
-    unknown = set(raw) - known
+    unknown = set(raw) - known - RETIRED_PICKS_KEYS
     if unknown:
         raise UserConfigError(
             f"{where}: [picks] unknown key(s) {', '.join(sorted(unknown))}; "
@@ -253,9 +198,24 @@ def _parse_picks(raw: object, where: str) -> PicksConfig:
         )
 
     config = PicksConfig()
-    if "min_item_protein_g" in raw:
-        config.min_item_protein_g = _parse_number(
-            raw["min_item_protein_g"], f"{where} [picks] min_item_protein_g", allow_zero=True
+    if "enabled" in raw:
+        if not isinstance(raw["enabled"], bool):
+            raise UserConfigError(f"{where} [picks] enabled: expected true or false")
+        config.enabled = raw["enabled"]
+    if "tolerance_pct" in raw:
+        config.tolerance_pct = _parse_number(
+            raw["tolerance_pct"], f"{where} [picks] tolerance_pct", allow_zero=False
+        )
+    if "side_min_calories" in raw:
+        config.side_min_calories = _parse_number(
+            raw["side_min_calories"], f"{where} [picks] side_min_calories", allow_zero=True
+        )
+    if "max_main_servings" in raw:
+        config.max_main_servings = _parse_whole(
+            raw["max_main_servings"],
+            f"{where} [picks] max_main_servings",
+            low=1,
+            high=MAX_MAIN_SERVINGS_LIMIT,
         )
     if "max_item_calories" in raw:
         # A database row can null the ceiling to disable it; TOML has no null.
@@ -264,20 +224,6 @@ def _parse_picks(raw: object, where: str) -> PicksConfig:
             None
             if ceiling is None
             else _parse_number(ceiling, f"{where} [picks] max_item_calories", allow_zero=False)
-        )
-    if "max_servings_per_item" in raw:
-        config.max_servings_per_item = _parse_whole(
-            raw["max_servings_per_item"],
-            f"{where} [picks] max_servings_per_item",
-            low=1,
-            high=MAX_TOTAL_SERVINGS_LIMIT,
-        )
-    if "max_total_servings" in raw:
-        config.max_total_servings = _parse_whole(
-            raw["max_total_servings"],
-            f"{where} [picks] max_total_servings",
-            low=1,
-            high=MAX_TOTAL_SERVINGS_LIMIT,
         )
     if "exclude_allergens" in raw:
         allergens = raw["exclude_allergens"]
@@ -312,8 +258,8 @@ def parse_user(data: dict, source: str) -> UserConfig:
 
     if "protein" in data:
         raise UserConfigError(
-            f"{source}: the [protein] table was replaced by [macros] (goals such as "
-            "protein = { target = 70 }) and [picks] (item limits and allergens); "
+            f"{source}: the [protein] table was replaced by [macros] (targets such as "
+            "protein = 60) and [picks] (on/off, plate rules and allergens); "
             "see users.example.toml"
         )
 

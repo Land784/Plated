@@ -19,9 +19,14 @@ North: Cantina Sandwich, Southwest Salad, Pork Tenderloin Agrodolce
 
 South: Pork Tenderloin Agrodolce, Mushroom Florentine Pork Chops, Pepperoni & Cheese French Bread Pizza
 
-PICKS · both halls · 78P 12C 16F · 513 cal
+PICKS · North · 56P 111C 4.8F · 725 cal
 2× Garden Herb Grilled Chicken · 42P · 178 cal
-Pork Tenderloin Agrodolce · 36P · 335 cal
+Steamed Jasmine Rice · 8P · 402 cal
+Falafel · 6P · 145 cal
+
+PICKS · South · 57P 89C 8F · 682 cal
+2× Garden Herb Grilled Chicken · 42P · 178 cal
+Long Grain Rice · 8P · 403 cal
 
 ──────────
 NORTH FULL MENU
@@ -159,36 +164,44 @@ run fails as if no menu were published.
 
 ## Meal picks
 
-A subscriber with a `[macros]` table gets one combo per hall, right
-after the glance lines, built for their own nutrient goals:
+A subscriber with picks switched on and at least one target gets one
+plate per hall, right after the glance lines (the Nutrition tab in the
+web app, or in a file):
 
 ```toml
-[macros]
-protein = { target = 70 }   # within 15%, or set tolerance = 10
-carbs   = { max = 60 }
-fiber   = { min = 8 }
+[macros]          # per meal, one set for every meal
+protein  = 60
+calories = 700    # carbs and fat work the same way
 
-[macros.brunch]             # per-meal override, merged per nutrient
-protein = { target = 50 }
+[picks]
+enabled = true
 ```
 
-Goals can be set on protein, carbs, fat, calories, fiber, sugar and
-sodium: every item at the tracked stations reports all seven. Each goal
-is any mix of `target`, `min` and `max`, and at least one target or min
-is required, since limits alone are met by eating nothing.
-
 ```
-PICKS · both halls · 78P 12C 16F · 513 cal
+PICKS · North · 56P 111C 4.8F · 725 cal
 2× Garden Herb Grilled Chicken · 42P · 178 cal
-Pork Tenderloin Agrodolce · 36P · 335 cal
+Steamed Jasmine Rice · 8P · 402 cal
+Falafel · 6P · 145 cal
 ```
 
-The header carries the combo's totals. Each line gives an item's
+A plate is one main plus up to two different sides, drawn from every
+food station in that hall (not only your stations), and each hall is
+planned on its own, since nobody eats at both in one meal. The main is
+anything the push would call a main (`main_protein_g`, default 10g, or
+a dish-word serving unit) at up to 2 servings; a side is any other item
+with at least 50 calories, one serving each. A plate meets a target
+within 15% of it; of the plates that meet every target, the one closest
+to all of them wins, then the one with fewer items. If none meets, the
+closest plate is shown with a line such as
+`closest: protein 45g (want 51-69g)`. With only a protein target, sides
+are added just to hit protein and plates can run past 1,300 cal, so set
+calories too. An item picked at an earlier meal the same day is not
+picked again.
+
+The header carries the plate's totals. Each line gives an item's
 protein and calories for all its servings (`2×` doubles the reported
 per-serving numbers; that is arithmetic, not an estimate). When both
-halls land on the same combo, it prints once as `both halls`; otherwise each hall gets its own
-`PICKS · North · ...` block. A combo that misses a goal ends with a
-line such as `closest: protein 57g (want 60-80g)`.
+halls land on the same plate, it prints once as `both halls`.
 
 Per-item carbs and fat, serving sizes and allergen names are not in the
 push, to keep it short. The one exception: if you set
@@ -196,37 +209,25 @@ push, to keep it short. The one exception: if you set
 ` · allergens unknown`, since you asked to avoid something it can't be
 checked for. The disclaimer covers everyone else.
 
-Items come only from the subscriber's stations, and each hall is
-planned on its own, since nobody eats at both in one meal. The planner
-searches every combo of up to 4 servings, with at most 2 of any item,
-and of those meeting every goal picks the one supplying the most of
-what was asked for per calorie; for a lone protein goal, protein per
-calorie. If nothing meets every goal, the closest combo is shown with a
-line naming what it misses.
-
-Ranking by fewest calories was tried first and rejected: it always
-landed at the bottom of a target's range, choosing 62g protein for 507
-cal over 78g for 513.
-
-Three per-item rules keep the search honest against the real data, set
-in the optional `[picks]` table:
+Every plate rule is a `[picks]` setting (see `users.example.toml`):
+`tolerance_pct`, `side_min_calories`, `max_main_servings`,
+`max_item_calories`, `exclude_allergens`, `unknown_allergens`. The rules
+that keep it honest against the real data:
 
 - **Missing values are never guessed.** An item that doesn't report a
-  nutrient you have a goal on isn't ranked. A reported 0 is used as 0.
-- **A protein floor** (default 15g), applied when you have a protein
-  goal. Pure protein-per-calorie ranking once made a single lettuce
-  leaf the top pick for a 40g target.
+  nutrient you target isn't ranked. A reported 0 is used as 0.
 - **A calorie ceiling** (default 1200). Some rows are whole recipes
   listed as one serving: a 2473 cal "Cheese Pizza", serving "1 pizza".
   The serving unit can't tell them apart, so calories are the only
   signal. These rows are skipped, never corrected.
+- **Dietary labels aren't allergen data.** An item tagged only "Vegan"
+  or "High Performance" is unknown exactly like an untagged one: never
+  safe, and dropped under `unknown_allergens = "exclude"`.
 
-The planner compares one serving exactly as listed (`4 z` and all),
-because nutrients are only comparable per listed serving. Tags that are
-dietary labels rather than allergens ("Vegan", "High Performance") are
-not allergen data, so an item tagged only with them is unknown exactly
-like an untagged one: never safe, and dropped under
-`unknown_allergens = "exclude"`.
+The earlier planner searched any combo of up to 4 servings for the most
+protein per calorie; it picked "2× Garden Herb Grilled Chicken" every
+day and never a side. Ranking by fewest calories was tried before that
+and always landed at the bottom of a target's range.
 
 ## Subscribers in Supabase
 
@@ -277,8 +278,8 @@ their own notifications without a TOML file: where they eat, when, and
 which stations (cards showing dishes each one served recently, with a
 star for favorites), plus a pause switch, a live preview of their own
 push for any meal this week, and ntfy phone setup with a "send a test"
-button. There is no public sign-up and no macros section (picks are off
-for everyone until the planner is rebuilt); admin stays in the CLI.
+button, and a Nutrition tab for targets, allergens and plate rules.
+There is no public sign-up; admin stays in the CLI.
 It's Next.js, Tailwind and shadcn/ui; [web/README.md](web/README.md)
 covers its routes, local dev, and the Supabase dashboard settings it
 needs.
@@ -514,7 +515,7 @@ live API.
 
 ## Not yet built
 
-Watchlist alerts, a public menu page, macros and account deletion in
+Watchlist alerts, a public menu page, account deletion in
 the web app, and menu history beyond 60 days. History belongs in
 Supabase (the `menus` table is its start): GitHub Actions runners start
 with an empty disk every run, so the SQLite history in `menu/db.py`
